@@ -13,6 +13,9 @@ from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner
 import pyvista as pv
 
+#Parameter constants used 
+zet = 1.6
+u = -0.75
 
 # Step 1: Create mesh
 msh = create_unit_square(MPI.COMM_WORLD, 96, 96, CellType.triangle)
@@ -20,12 +23,15 @@ P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh,P1)
 
 w_phi = ufl.TestFunctions(ME) # test function for order parameter
-
 phi = Function(ME) # trial function n+1
-
 phi_0 = Function(ME) # previous value
 
 # Boundary condition application
+#Weak form and ealuation of equation
+ph = ufl.variable(phi) 
+f = -0.5*ph**2 + 0.25*ph**4 + zet*u*ph*(1-(2/3)*ph**2+0.2*ph**4)
+df = ufl.diff(f , ph)
+print(ufl.algorithms.expand_derivatives(df))
 
 
 
