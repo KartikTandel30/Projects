@@ -9,22 +9,27 @@ from dolfinx import default_real_type, log, plot
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.io import XDMFFile
-from dolfinx.mesh import CellType, create_unit_square
+from dolfinx.mesh import CellType, create_unit_square, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner
 import pyvista as pv
 import pyvistaqt as pvq
 import numpy as np
+import ufl.differentiation
 
 #Parameter constants used, taken from the ref. paper
 zet = 1.6
 u = -0.75
 tau_0 = 1 # Characteristic time scale 
 lamda_0 = 1 #characteristic interface thickness
-dt = 0.1 #time step
+dt = 0.01 #time step
 
 #  Create mesh
-msh = create_unit_square(MPI.COMM_WORLD, 100, 100, CellType.triangle)
+#msh = create_unit_square(MPI.COMM_WORLD, 100, 100, CellType.triangle)
+msh = create_rectangle(MPI.COMM_WORLD,
+                       [[0.0, 0.0], [10.0, 10.0]],  # New domain corners
+                       [10, 10],               # More elements for resolution
+                       cell_type=CellType.triangle)
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh,P1)
 
@@ -38,8 +43,8 @@ phi.x.array[:] = -1.0 # initializing to liquid over the entire domain
 
 # solid pertubation creation
 
-center = np.array([0.5,0.5])
-radius = 0.025
+center = np.array([5,5])
+radius = 0.5
 phi.interpolate(
     lambda x: np.where(
         np.linalg.norm(x[:2] - center[:,None], axis=0) < radius,
@@ -53,11 +58,13 @@ phi.x.scatter_forward()
 
 
 #Weak form and ealuation of equation
-"""
+'''
 ph = ufl.variable(phi) 
-f = -0.5*ph**2 + 0.25*ph**4 + zet*u*ph*(1-(2/3)*ph**2+0.2*ph**4)"""
+f = -0.5*ph**2 + 0.25*ph**4 + zet*u*ph*(1-(2/3)*ph**2+0.2*ph**4)
+df = ufl.derivative(f, ph)'''
+#df = (-phi + phi**3 + zet*u*(1 - 2*phi + phi**4)) - (-phi_0 + phi_0**3 + zet*u*(1 - 2*phi_0 + phi_0**4))
 df = -phi + phi**3 + zet*u*(1- 2*phi + phi**4)
-print(df)
+#print(df)
 #print(ufl.algorithms.expand_derivatives(df))
 
 #  weak or variational form for the task-1
@@ -71,30 +78,21 @@ print(R0)
 problem = NonlinearProblem(R0, phi)
 solver = NewtonSolver(MPI.COMM_WORLD, problem)
 
+opt = PETSc.Options()
+opt["snes_monitor"] = ""  # to print the  newton residue
+opt["ksp_type"] = "preonly"
+opt["pc_type"] = "lu"
+
 solver.convergence_criterion = "incremental"
 solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-2
 solver.atol = 1e-12
 solver.max_it = 25
 solver.report = True
 
-# setting the type of the solver
-ksp = solver.krylov_solver
-opt = PETSc.Options()
-opt_prefix = ksp.getOptionsPrefix()
-
-opt[f"{opt_prefix}ksp_type"] = "preonly"
-opt[f"{opt_prefix}pc_type"] = "lu"
-opt[f"{opt_prefix}snes_monitor"] = ""
-sys = PETSc.Sys()
-
-if sys.hasExternalPackage("superlu_dist"):
-    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "superlu_dist"
-elif sys.hasExternalPackage("mumps"):
-    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
-ksp.setFromOptions()
+solver.krylov_solver.setFromOptions()
 
 t = 0.0
-T = 25*dt
+T = 10
 ''' to view the mesh created 
 # outputing the mesh file to view in other source( paraview )
 file = XDMFFile(MPI.COMM_WORLD, "demo_ch/output.xdmf", "w")
