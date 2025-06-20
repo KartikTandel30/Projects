@@ -7,7 +7,6 @@ from dolfinx.nls.petsc import NewtonSolver
 from basix.ufl import element
 from ufl import dx, grad, inner
 import petsc4py.PETSc as PETSc
-import time
 
 # --- PyVista Setup ---
 try:
@@ -21,12 +20,12 @@ except ModuleNotFoundError:
     have_pyvista = False
 
 # --- Parameters ---
-epsilon = 1.0e-2  # Interface width parameter
-lambda_c = 1.6    # Coupling constant
-nu = -0.75        # Constant temperature undercooling
-dt = 1e-3         # Time step
-T = 1          # Final time
-tau = 1.0         # Relaxation time
+epsilon = 0.01  # Interface width parameter
+lambda_c = 1.0    # Coupling constant
+nu = -0.75         # Constant temperature undercooling
+dt = 0.01         # Time step
+theta = 0.5       # Crank-Nicolson
+T = 100           # Final time
 
 # --- Mesh and function space ---
 domain = mesh.create_unit_square(MPI.COMM_WORLD, 64, 64)
@@ -47,17 +46,20 @@ phi_n.interpolate(initial_phi)
 phi.x.scatter_forward()
 phi_n.x.scatter_forward()
 
-# --- Free energy derivative from paper (fully implicit) ---
-gp = -phi + phi**3
-hp = 1 - 2 * phi**2 + phi**4
+# --- Free energy derivative from paper ---
+phi_mid = (1 - theta) * phi_n + theta * phi
+
+gp = -phi_mid + phi_mid**3
+hp = 1 - 2 * phi_mid**2 + phi_mid**4
+
 dfdphi = gp + lambda_c * nu * hp
 
-F = tau * ((phi - phi_n) / dt) * w * dx + dfdphi * w * dx + epsilon**2 * inner(grad(phi), grad(w)) * dx
+F = ((phi - phi_n) / dt) * w * dx + epsilon**2 * inner(grad(phi_mid), grad(w)) * dx + dfdphi * w * dx
 
 # --- Nonlinear solver ---
 problem = NonlinearProblem(F, phi)
 solver = NewtonSolver(domain.comm, problem)
-solver.rtol = 1e-12
+solver.rtol = 1e-6
 solver.convergence_criterion = "incremental"
 
 # Optional: direct solver
@@ -78,12 +80,11 @@ if have_pyvista:
     topology, cell_types, x = plot.vtk_mesh(V)
     grid = pv.UnstructuredGrid(topology, cell_types, x)
     grid.point_data["phi"] = phi.x.array.real
-    grid.set_active_scalars("phi")
     p = pvqt.BackgroundPlotter(title="Phase-Field Evolution", auto_update=True)
     p.add_mesh(grid, clim=[-1, 1])
     p.view_xy(True)
     p.add_text("time: 0.0", name="time_label", font_size=10)
-    p.show()
+
 # --- Time stepping ---
 t = 0.0
 step = 0
@@ -102,17 +103,4 @@ while t < T:
         p.add_text(f"time: {t:.3f}", name="time_label")
         p.app.processEvents()
 
-phi.x.scatter_forward()
-grid.point_data["Phase"] = phi.x.array
-screenshot = None
-if pv.OFF_SCREEN:
-    screenshot = "phase.png"
-pv.plot(grid, show_edges = True, screenshot=screenshot)
-
 xdmf.close()
-
-# Hold the final plot open (if using PyVista)
-if have_pyvista:
-    print("Simulation complete. Close the plot window to exit.")
-    while p.app.running:
-        time.sleep(0.1)

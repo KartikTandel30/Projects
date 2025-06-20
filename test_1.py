@@ -28,7 +28,7 @@ dt = 0.01 #time step
 #msh = create_unit_square(MPI.COMM_WORLD, 100, 100, CellType.triangle)
 msh = create_rectangle(MPI.COMM_WORLD,
                        [[0.0, 0.0], [10.0, 10.0]],  # New domain corners
-                       [10, 10],               # More elements for resolution
+                       [100, 100],               # More elements for resolution
                        cell_type=CellType.triangle)
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh,P1)
@@ -39,20 +39,15 @@ phi_0 = Function(ME) # previous value
 
 # Boundary and Initial condition application
 #intial condition
-phi.x.array[:] = -1.0 # initializing to liquid over the entire domain
+def initial_phi(x):
+    r = np.sqrt((x[0] - 5)**2 + (x[1] - 5)**2)
+    print("radius=",r)
+    return np.where(r < 0.05, 1.0, -1.0)
 
-# solid pertubation creation
-
-center = np.array([5,5])
-radius = 0.5
-phi.interpolate(
-    lambda x: np.where(
-        np.linalg.norm(x[:2] - center[:,None], axis=0) < radius,
-        1.0,
-        -1.0)
-) 
-phi.x.scatter_forward() 
- 
+phi.interpolate(initial_phi)
+phi_0.interpolate(initial_phi)
+phi.x.scatter_forward()
+phi_0.x.scatter_forward()
 
 # No flux boundary condition should be applied 
 
@@ -63,7 +58,7 @@ ph = ufl.variable(phi)
 f = -0.5*ph**2 + 0.25*ph**4 + zet*u*ph*(1-(2/3)*ph**2+0.2*ph**4)
 df = ufl.derivative(f, ph)'''
 #df = (-phi + phi**3 + zet*u*(1 - 2*phi + phi**4)) - (-phi_0 + phi_0**3 + zet*u*(1 - 2*phi_0 + phi_0**4))
-df = -phi + phi**3 + zet*u*(1- 2*phi + phi**4)
+df = -phi + phi**3 + zet*u*(1- 2*phi**2 + phi**4)
 #print(df)
 #print(ufl.algorithms.expand_derivatives(df))
 
