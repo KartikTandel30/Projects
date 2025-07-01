@@ -9,7 +9,7 @@ from dolfinx import default_real_type, log, plot
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.io import XDMFFile
-from dolfinx.mesh import CellType, create_unit_square
+from dolfinx.mesh import CellType, create_unit_square, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner
 import pyvista as pv
@@ -18,14 +18,18 @@ import numpy as np
 import time
 
 # Parameter constants used, taken from the ref. paper
-zet = 1.6
-u = -0.75
-tau_0 = 1  # Characteristic time scale 
-lamda_0 = 0.01  # characteristic interface thickness
-dt = 0.001  # time step
+zet = 1.6   # coupling constant
+u = -0.75   # Temparature
+tau_0 = 1   # Characteristic time scale 
+lamda_0 = 1   # characteristic interface thickness
+dt = 0.04   # time step
 
 # Create mesh
-msh = create_unit_square(MPI.COMM_WORLD, 100, 100, CellType.triangle)
+'''msh = create_unit_square(MPI.COMM_WORLD, 10, 10, CellType.triangle)'''
+msh = create_rectangle(MPI.COMM_WORLD,
+                       [[0.0, 0.0], [500, 500]],  # New domain corners
+                       [100, 100],               # More elements for resolution
+                       cell_type=CellType.triangle) 
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, P1)
 
@@ -34,8 +38,8 @@ phi = Function(ME)  # trial function n+1
 phi_0 = Function(ME)  # previous value
 
 def initial_phi(x):
-    r = np.sqrt((x[0] - 0.5)**2 + (x[1] - 0.5)**2)
-    return np.where(r < 0.05, 1.0, -1.0)
+    r = np.sqrt((x[0] - 250.0)**2 + (x[1] - 250.0)**2)  # Center at (250, 250)
+    return np.where(r < 25.0, 1.0, -1.0)
 
 phi.interpolate(initial_phi)
 phi_0.interpolate(initial_phi)
@@ -48,8 +52,8 @@ df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 # Weak or variational form for the task-1
 R0 = ( tau_0*phi*w_phi*dx 
       - tau_0*phi_0*w_phi*dx
-      + dt*inner(df, w_phi)*dx
-      + lamda_0*dt*inner(grad(phi), grad(w_phi))*dx )
+      + dt*inner(df, w_phi)*dx 
+      + lamda_0**2*dt*inner(grad(phi), grad(w_phi))*dx ) 
 
 # Solving the nonlinear problem 
 problem = NonlinearProblem(R0, phi)
@@ -77,7 +81,7 @@ elif sys.hasExternalPackage("mumps"):
 ksp.setFromOptions()
 
 t = 0.0
-T = 5
+T = 20
 
 # Visualize using PyVista
 topology, cell_types, x = plot.vtk_mesh(ME)

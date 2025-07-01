@@ -28,7 +28,7 @@ dt = 0.01 #time step
 #msh = create_unit_square(MPI.COMM_WORLD, 100, 100, CellType.triangle)
 msh = create_rectangle(MPI.COMM_WORLD,
                        [[0.0, 0.0], [10.0, 10.0]],  # New domain corners
-                       [100, 100],               # More elements for resolution
+                       [50, 50],               # More elements for resolution
                        cell_type=CellType.triangle)
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh,P1)
@@ -36,6 +36,7 @@ ME = functionspace(msh,P1)
 w_phi = ufl.TestFunction(ME) # test function for order parameter
 phi = Function(ME) # trial function n+1
 phi_0 = Function(ME) # previous value
+
 
 # Boundary and Initial condition application
 #intial condition
@@ -66,7 +67,7 @@ df = -phi + phi**3 + zet*u*(1- 2*phi**2 + phi**4)
 R0 = ( tau_0*inner(phi, w_phi)*dx 
       - tau_0*inner(phi_0, w_phi)*dx
       + dt*inner(df,w_phi)*dx
-      + lamda_0*dt*inner(grad(phi),grad(w_phi))*dx 
+      + lamda_0**2*dt*inner(grad(phi),grad(w_phi))*dx 
 )
 print(R0)
 # solving the nonlinear problem 

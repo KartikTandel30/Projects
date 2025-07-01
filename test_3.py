@@ -21,7 +21,7 @@ except ModuleNotFoundError:
 
 # --- Parameters ---
 epsilon = 0.01  # Interface width parameter
-lambda_c = 1.0    # Coupling constant
+lambda_c = 1.6    # Coupling constant
 nu = -0.75         # Constant temperature undercooling
 dt = 0.01         # Time step
 theta = 0.5       # Crank-Nicolson
