@@ -142,7 +142,11 @@ wb_all.save("all_nodes_phi_fphi_data.xlsx")
 
 # Final f vs phi plot
 phi_vals_final = phi.x.array.real
-f_vals_final = -phi_vals_final + phi_vals_final**3 + zet * u * (1 - 2 * phi_vals_final**2 + phi_vals_final**4)
+f_vals_final = (
+    -0.5 * phi_vals_final**2
+    + 0.25 * phi_vals_final**4
+    + zet * u * phi_vals_final * (1 - (2/3) * phi_vals_final**2 + 0.2 * phi_vals_final**4)
+    )
 plt.figure()
 plt.plot(phi_vals_final, f_vals_final, '.', alpha=0.4)
 plt.xlabel("ϕ")

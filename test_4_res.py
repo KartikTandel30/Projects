@@ -43,7 +43,7 @@ def initial_phi(x):
 
 '''
 def initial_phi(x):
-    return -1.0* np.ones(x.shape[1], dtype=default_real_type)
+    return -0.60* np.ones(x.shape[1], dtype=default_real_type)
 
 
 phi.interpolate(initial_phi)
@@ -106,7 +106,7 @@ while t < T:
     plotter.remove_actor("timelabel")
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
     plotter.app.processEvents()
-    '''
+    """
     # Plot f(ϕ) vs ϕ every 25 steps
     if int(t / dt) % 25 == 0:
         phi_vals = phi.x.array.real
@@ -120,7 +120,7 @@ while t < T:
         plt.tight_layout()
         plt.savefig(f"f_vs_phi_t{int(t*100):04d}.png", dpi=300)
         plt.close()
-    '''
+    """
 
 # Final plot
 phi.x.scatter_forward()
