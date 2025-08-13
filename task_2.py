@@ -49,8 +49,8 @@ def initial_phi(x):
     return -1* np.ones(x.shape[1], dtype=default_real_type)
 
 u_init = -0.75
-com.sub(0).interpolate(lambda x: np.full_like(x[0], u_init))   # u
-com.sub(1).interpolate(initial_phi) 
+com.sub(0).interpolate(lambda x: np.full_like(x[0], u_init))   # for temperature 
+com.sub(1).interpolate(initial_phi)  # for the bond order parameter
 com_0.sub(1).interpolate(initial_phi)
 
 com.x.scatter_forward()  # for parallelization 

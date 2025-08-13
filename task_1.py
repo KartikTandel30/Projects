@@ -37,13 +37,14 @@ w_phi = ufl.TestFunction(ME)  # test function for order parameter
 phi = Function(ME)  # trial function n+1
 phi_0 = Function(ME)  # previous value
 
-'''
+
 def initial_phi(x):
     r = np.sqrt((x[0] - 250.0)**2 + (x[1] - 250.0)**2)  # Center at (250, 250)
     return np.where(r < 25.0, 1.0, -1.0)
 '''
 def initial_phi(x):
     return -1* np.ones(x.shape[1], dtype=default_real_type)
+'''
 
 phi.interpolate(initial_phi)
 phi_0.interpolate(initial_phi)
