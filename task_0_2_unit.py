@@ -19,7 +19,7 @@ import time
 
 # --- Parameters (as you had) ---
 zet = 1.6     # coupling constant (λ)
-u = 0.75      # Temperature / undercooling (flip sign as you wish)
+u = -0.75      # Temperature / undercooling (flip sign as you wish)
 tau_0 = 1     # Characteristic time scale
 lamda_0 = 1   # Interface thickness ε
 dt = 0.04     # time step
@@ -30,11 +30,17 @@ def favored_phase(u, zet):
 
 # --- Mesh ---
 Lx, Ly = 100.0, 100.0
+Nx, Ny = 50, 50
 msh = create_rectangle(MPI.COMM_WORLD,
                        [[0.0, 0.0], [Lx, Ly]],
-                       [50, 50],
+                       [Nx,Ny],
                        cell_type=CellType.triangle)
+
+hx = Lx / Nx
+edge_tol = 1e-6*hx
+
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
+
 ME = functionspace(msh, P1)
 
 w_phi = ufl.TestFunction(ME)
@@ -44,55 +50,25 @@ phi_0 = Function(ME, name="phi_0")
 # =========================
 #   INITIALIZATION (NEW)
 # =========================
-def init_phi_half_sharp(phi_fn, Lx, Ly, orientation="vertical", solid_on="left"):
-    # +1 solid, -1 liquid
-    if orientation.lower() == "vertical":
-        def step(x):
-            left = x[0] < 0.5 * Lx
-            if solid_on.lower() in ("left", "+x"):
-                return np.where(left, 1.0, -1.0)
-            else:
-                return np.where(left, -1.0, 1.0)
-        phi_fn.interpolate(step)
-    else:  # horizontal
-        def step(x):
-            bottom = x[1] < 0.5 * Ly
-            if solid_on.lower() in ("bottom", "-y"):
-                return np.where(bottom, 1.0, -1.0)
-            else:
-                return np.where(bottom, -1.0, 1.0)
-        phi_fn.interpolate(step)
 
-def init_phi_half_smooth(phi_fn, Lx, Ly, eps, orientation="vertical", solid_on="left"):
-    # Smooth tanh interface; width ~ sqrt(2)*eps (good for Newton)
-    root2eps = np.sqrt(2.0) * eps
-    if orientation.lower() == "vertical":
-        def prof(x):
-            s = (x[0] - 0.5 * Lx) / root2eps
-            return -np.tanh(s) if solid_on.lower() in ("left", "+x") else np.tanh(s)
-        phi_fn.interpolate(prof)
-    else:
-        def prof(x):
-            s = (x[1] - 0.5 * Ly) / root2eps
-            return -np.tanh(s) if solid_on.lower() in ("bottom", "-y") else np.tanh(s)
-        phi_fn.interpolate(prof)
+def init_phi_half_sharp(phi_fn, Lx, Ly):
+    def step(x):
+        left = x[0] < 0.5*Lx
+        return np.where(left, 1.0,  -1.0)
+    phi_fn.interpolate(step)
 
 def report_fraction(phi_fn, label):
     frac_solid = (phi_fn.x.array > 0).mean()
-    if np.isnan(frac_solid):  # parallel safety
+    if np.isnan(frac_solid):  
         frac_solid = 0.0
     if msh.comm.rank == 0:
         print(f"{label}: solid fraction ≈ {frac_solid:.3f}")
 
 # --- choose one init ---
-INIT_MODE = "smooth"   # "sharp" or "smooth"
-ORI       = "vertical" # "vertical" or "horizontal"
-SOLID_ON  = "left"     # for vertical: left/right, for horizontal: bottom/top
+INIT_MODE = "sharp"   # "sharp" or "smooth"
+ORI = "vertical"
 
-if INIT_MODE == "sharp":
-    init_phi_half_sharp(phi, Lx, Ly, orientation=ORI, solid_on=SOLID_ON)
-else:
-    init_phi_half_smooth(phi, Lx, Ly, eps=lamda_0, orientation=ORI, solid_on=SOLID_ON)
+init_phi_half_sharp(phi, Lx, Ly)
 
 phi_0.x.array[:] = phi.x.array
 phi.x.scatter_forward(); phi_0.x.scatter_forward()
@@ -103,10 +79,9 @@ if msh.comm.rank == 0:
 # =========================
 #   VARIATIONAL FORM
 # =========================
-# dF/dφ = g'(φ) + λ u h'(φ) with g'(φ)=-φ+φ^3, h'(φ)=1-2φ^2+φ^4
 df = -phi + phi**3 + zet * u * (1 - 2*phi**2 + phi**4)
 
-# Backward Euler Allen–Cahn (kept exactly as you had)
+# Backward Euler Allen–Cahn 
 R0 = ( tau_0*phi*w_phi*dx 
       - tau_0*phi_0*w_phi*dx
       + dt*inner(df, w_phi)*dx 
@@ -140,13 +115,13 @@ ksp.setFromOptions()
 #   VISUALIZATION
 # =========================
 t = 0.0
-T = 20.0
+T = 40.0
 topology, cell_types, x = plot.vtk_mesh(ME)
 grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = phi.x.array.real
 grid.set_active_scalars("Phase")
 plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
+plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
 plotter.view_xy(True)
 plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 
@@ -158,38 +133,19 @@ X, Y = SpatialCoordinate(msh)
 times, fsolids, iface_pos, iface_speed = [], [], [], []
 prev_pos = None
 
-def interface_pos(phi_fn, Lx, Ly, orientation="vertical"):
+def interface_pos(phi_fn, Lx, Ly):
     """
-    Estimate flat interface position from moments of the smooth indicator I=(φ+1)/2.
-    Works whether solid is on left/right (or bottom/top).
+    Vertical interface; solid (+1) on RIGHT.
+    I = (φ+1)/2 is solid indicator. Solid area As = ∫ I dΩ.
+    For a flat cut at x* with solid on the right:  As = (Lx - x*) * Ly
+    => x* = Lx - As/Ly
     """
     I = 0.5 * (phi_fn + 1.0)
-    M0 = float(assemble_scalar(form(I * dx)))  # ~ solid area
-    if M0 <= 0.0:
-        return 0.0
-    if orientation == "vertical":
-        M1 = float(assemble_scalar(form(X * I * dx)))   # ∫ x I dΩ
-        xL = 2.0 * M1 / M0                  # model: solid on left → x* = 2 M1 / M0
-        xR = Lx - (M0 / Ly)                 # model: solid on right → x* = Lx - (area_solid / Ly)
-        # pick the one within [0,Lx] whose implied moment matches best
-        xL_valid = 0.0 <= xL <= Lx
-        xR_valid = 0.0 <= xR <= Lx
-        if xL_valid and xR_valid:
-            errL = abs(M1 - (Ly * xL**2) / 2.0)
-            errR = abs(M1 - (Ly * (Lx**2 - xR**2)) / 2.0)
-            return xL if errL <= errR else xR
-        return xL if xL_valid else xR
-    else:
-        M1 = float(assemble_scalar(form(Y * I * dx)))   # ∫ y I dΩ
-        yB = 2.0 * M1 / M0
-        yT = Ly - (M0 / Lx)
-        yB_valid = 0.0 <= yB <= Ly
-        yT_valid = 0.0 <= yT <= Ly
-        if yB_valid and yT_valid:
-            errB = abs(M1 - (Lx * yB**2) / 2.0)
-            errT = abs(M1 - (Lx * (Ly**2 - yT**2)) / 2.0)
-            return yB if errB <= errT else yT
-        return yB if yB_valid else yT
+    As = float(assemble_scalar(form(I * dx)))
+    return Lx - As / Ly
+
+xdmf = XDMFFile(msh.comm, "phase.xdmf", "w")
+xdmf.write_mesh(msh)
 
 # =========================
 #   TIME LOOP
@@ -199,11 +155,18 @@ while t < T:
     n_it, converged = solver.solve(phi)
     phi_0.x.array[:] = phi.x.array
     phi.x.scatter_forward()
-
+    xdmf.write_function(phi, t)
     # — interface metrics (NEW) —
     mass_solid = assemble_scalar(form(0.5 * (phi + 1.0) * dx))
     f_solid = float(mass_solid / area)
-    pos = interface_pos(phi, Lx, Ly, ORI)
+    pos = interface_pos(phi, Lx, Ly)
+    hit_left  = pos <= edge_tol           # interface near x=0
+    hit_right = (Lx - pos) <= edge_tol    # (if you ever grow the other way)
+
+    if hit_left or hit_right:
+        side = "left" if hit_left else "right"
+        print(f"Stopping: interface reached {side} edge (x*={pos:.4g}, tol={edge_tol:.4g}) at t={t:.4g}")
+        break
     v = 0.0 if prev_pos is None else (pos - prev_pos) / dt
     prev_pos = pos
 
@@ -219,6 +182,7 @@ while t < T:
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
     plotter.app.processEvents()
 
+xdmf.close()
 # =========================
 #   SAVE TRACK (NEW)
 # =========================

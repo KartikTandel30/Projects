@@ -25,11 +25,11 @@ lamda_0 = 1   # characteristic interface thickness
 dt = 0.04   # time step
 
 # Create mesh
-'''msh = create_unit_square(MPI.COMM_WORLD, 10, 10, CellType.triangle)'''
+Lx, Ly = 100.0, 100.0
 msh = create_rectangle(MPI.COMM_WORLD,
-                       [[0.0, 0.0], [500, 500]],  # New domain corners
-                       [100, 100],               # More elements for resolution
-                       cell_type=CellType.triangle) 
+                       [[0.0, 0.0], [Lx, Ly]],
+                       [50, 50],
+                       cell_type=CellType.triangle)
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, P1)
 
@@ -37,14 +37,18 @@ w_phi = ufl.TestFunction(ME)  # test function for order parameter
 phi = Function(ME)  # trial function n+1
 phi_0 = Function(ME)  # previous value
 
-
+'''
 def initial_phi(x):
     r = np.sqrt((x[0] - 250.0)**2 + (x[1] - 250.0)**2)  # Center at (250, 250)
     return np.where(r < 25.0, 1.0, -1.0)
-'''
+
 def initial_phi(x):
     return -1* np.ones(x.shape[1], dtype=default_real_type)
 '''
+def initial_phi(x):
+    left = x[0] < 0.5*Lx
+    return np.where(left, 1.0, -1.0)
+   
 
 phi.interpolate(initial_phi)
 phi_0.interpolate(initial_phi)

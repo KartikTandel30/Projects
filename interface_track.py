@@ -15,8 +15,8 @@ idx = np.linspace(0, len(t)-1, 6, dtype=int)
 plt.figure(figsize=(5.6, 5.6))
 for k in idx:
     # vertical ϕ=0 line at x = x*(t_k)
-    plt.plot([xstar[k], xstar[k]], [0, Ly], linewidth=2)
-    plt.text(xstar[k], 0.02*Ly, f"{t[k]:.2f}", ha="center", va="bottom")
+    plt.plot([xstar[k], xstar[k]], [0, Ly], linewidth=2, color="k")
+    plt.text(xstar[k], 0.02*Ly, f"{t[k]:.2f}", ha="center", va="bottom", color="k")
 
 plt.xlim(0, Lx); plt.ylim(0, Ly)
 plt.gca().set_aspect("equal", adjustable="box")

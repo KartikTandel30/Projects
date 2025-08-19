@@ -102,7 +102,7 @@ grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = phi.x.array.real
 grid.set_active_scalars("Phase")
 plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
+plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
 plotter.view_xy(True)
 plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 

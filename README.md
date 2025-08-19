@@ -1,2 +1,0 @@
-# PPP
-Personal Programming Project 

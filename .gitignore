@@ -1,2 +1,9 @@
-task1_output.h5
-*.h5
+# Ignore everything by default
+*
+
+# But allow descending into directories
+!*/
+
+# Track only Python files (and this .gitignore)
+!*.py
+!.gitignore

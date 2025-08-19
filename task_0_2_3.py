@@ -140,26 +140,21 @@ ksp.setFromOptions()
 # =========================
 t = 0.0
 T = 20.0
-VIS_EVERY = 5  # redraw every N steps
+VIS_EVERY = 1  # set >1 (e.g., 5 or 10) to throttle rendering
 
 topology, cell_types, x = plot.vtk_mesh(ME)
 grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = np.ascontiguousarray(phi.x.array.real)
 grid.set_active_scalars("Phase")
 
-plotter = pvq.BackgroundPlotter(title="Phase", auto_update=False)  # explicit renders
+plotter = pvq.BackgroundPlotter(title="Phase", auto_update=False)
 actor = plotter.add_mesh(
     grid, scalars="Phase", name="phi",
     clim=[-1, 1], cmap="coolwarm",
     show_edges=False, smooth_shading=True
 )
+plotter.show_grid(False)
 time_txt = plotter.add_text("time: 0.00", font_size=10)
-
-# add an interface line at the current position so you can see motion clearly
-x0 = Lx * 0.5  # initial guess; it will be updated in the loop
-iface = pv.Line((x0, 0.0, 0.0), (x0, Ly, 0.0))
-iface_actor = plotter.add_mesh(iface, name="iface", line_width=3)
-
 plotter.view_xy(True)
 plotter.render()
 
@@ -231,17 +226,9 @@ while t < T:
     # refresh the window every VIS_EVERY steps
     step = int(round(t/dt))
     if step % VIS_EVERY == 0:
-        # 1) update scalar field on the SAME mesh/actor
         new_vals = np.ascontiguousarray(phi.x.array.real)
         grid.point_data["Phase"] = new_vals
-        plotter.update_scalars(new_vals, mesh=grid, render=False)  # <- key line
-
-        # 2) move the interface line to the tracked position "pos"
-        plotter.remove_actor("iface")
-        iface = pv.Line((pos, 0.0, 0.0), (pos, Ly, 0.0))
-        iface_actor = plotter.add_mesh(iface, name="iface", line_width=3)
-
-        # 3) update time text + force a render
+        plotter.update_scalars(new_vals, mesh=grid, render=False)  # push to actor
         time_txt.SetText(2, f"time: {t:.2e}")
         plotter.app.processEvents()
         plotter.render()
