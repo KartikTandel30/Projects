@@ -30,7 +30,7 @@ def favored_phase(u, zet):
 
 # --- Mesh ---
 Lx, Ly = 100.0, 100.0
-Nx, Ny = 50, 50
+Nx, Ny = 175, 175
 msh = create_rectangle(MPI.COMM_WORLD,
                        [[0.0, 0.0], [Lx, Ly]],
                        [Nx,Ny],
