@@ -1,48 +1,46 @@
 from petsc4py import PETSc
-import dolfinx
 from mpi4py import MPI
-
 import ufl
-from basix.ufl import element, mixed_element
-from dolfinx import default_real_type, log, plot, fem
-from dolfinx.fem import Function, functionspace
-from dolfinx.fem.petsc import NonlinearProblem
-from dolfinx.io import XDMFFile
-from dolfinx.mesh import CellType, create_rectangle
-from dolfinx.nls.petsc import NewtonSolver
-from dolfinx.fem import locate_dofs_geometrical  # geometry-based BC
-from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot
+import numpy as np
 import pyvista as pv
 import pyvistaqt as pvq
-import numpy as np
 import time
 
-# ---------------- Parameters (tuned for growth) ----------------
-zet = 1.6        # coupling ξ
-tau_0 = 0.30     # faster interface kinetics helps propagation
-lamda_0 = 1.0    # interface thickness λ0
-dt = 0.02        # smaller step = more robust with anisotropy
-D = 1.0          # thermal diffusivity
-u_inf = -0.80    # Dirichlet BC at outer boundary (sustained undercooling)
-eps_val = 0.05   # anisotropy strength ε4
-eta_val = 1e-8   # numerical regularization for |∇φ|
-# ---------------------------------------------------------------
+from basix.ufl import element, mixed_element
+from dolfinx import default_real_type, plot, fem
+from dolfinx.fem import Function, functionspace
+from dolfinx.fem.petsc import NonlinearProblem
+from dolfinx.mesh import CellType, create_rectangle
+from dolfinx.nls.petsc import NewtonSolver
+from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt  # (no dot needed)
 
-# Create mesh
+# ---------------- Parameters (paper) ----------------
+zet = 1.6        # coupling ξ
+tau_0 = 1.0      # base kinetic time-scale τ0
+lamda_0 = 1.0    # λ0
+dt = 0.02        # Δt
+D = 1.0          # thermal diffusivity
+u_inf = -0.75    # initial undercooling (IC), NOT a boundary clamp
+eps_val = 0.05   # ε4 (anisotropy strength)
+eta_val = 1e-8   # regularization for |∇φ|
+T = 20.0
+# ----------------------------------------------------
+
+# Mesh
 Lx, Ly = 100.0, 100.0
-Nx, Ny = 50, 50
+Nx, Ny = 175, 175
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, mixed_element([P1, P1]))
 
-w_phi, w_u = ufl.TestFunctions(ME)  # tests
-com   = Function(ME)                # unknowns at n+1
-com_0 = Function(ME)                # values at n
-
-phi, u       = ufl.split(com)
-phi_0, u_0   = ufl.split(com_0)
+# Unknowns / tests
+w_phi, w_u = ufl.TestFunctions(ME)
+com   = Function(ME)
+com_0 = Function(ME)
+phi, u     = ufl.split(com)
+phi_0, u_0 = ufl.split(com_0)
 
 # ---------------- Initial conditions ----------------
 def initial_phi(x):
@@ -60,25 +58,33 @@ com.sub(0).interpolate(initial_phi)
 com_0.sub(0).interpolate(initial_phi)
 com.sub(1).interpolate(initial_u)
 com_0.sub(1).interpolate(initial_u)
+com.x.scatter_forward(); com_0.x.scatter_forward()
+
+# tiny symmetry-breaking noise to φ in the interface band (optional)
+P0_phi, dof_phi = ME.sub(0).collapse()
+phi_vals = com.x.array[dof_phi].copy()
+mask = np.abs(phi_vals) < 0.9
+phi_vals[mask] += 1e-3 * (rng.random(np.count_nonzero(mask)) - 0.5)
+com.x.array[dof_phi] = phi_vals
 com.x.scatter_forward()
-com_0.x.scatter_forward()
 
 # ---------------- Free-energy derivative ∂f/∂φ ----------------
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
-# ---------------- Anisotropy block (cubic/4-fold) --------------
+# ---------------- Anisotropy a(n̂) & separate weak terms -------
 eps_an = fem.Constant(msh, default_real_type(eps_val))
 eta    = fem.Constant(msh, default_real_type(eta_val))
 
-gphi = grad(phi)
-g2   = inner(gphi, gphi)
-ng   = sqrt(g2 + eta**2)
-nHat = gphi / ng
+gphi = grad(phi)                  # ∇φ
+g2   = inner(gphi, gphi)          # |∇φ|^2
+ng   = sqrt(g2 + eta*eta)         # |∇φ|_η
+nHat = gphi / ng                  # n̂
 
 d = msh.geometry.dim
 I = Identity(d)
-P = I - outer(nHat, nHat)
+P = I - outer(nHat, nHat)         # projector tangent to n̂
 
+# a(n̂): cubic 4-fold from the paper: a = (1-3ε) + 4ε Σ n_i^4
 if d == 2:
     a     = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nHat[0]**4 + nHat[1]**4)
     da_dn = as_vector((16.0*eps_an*nHat[0]**3,
@@ -89,13 +95,29 @@ else:
                        16.0*eps_an*nHat[1]**3,
                        16.0*eps_an*nHat[2]**3))
 
-da_dg = dot(P, da_dn) / ng
-q_phi = lamda_0**2 * (a**2 * gphi + g2 * a * da_dg)
-F_grad_aniso = inner(q_phi, grad(w_phi)) * dx
+# τ(n) = τ0 * a(n)^2  (orientation-dependent kinetic coefficient)
+tau_n = tau_0 * a**2
+
+# ∂a/∂(∇φ) = (I − n⊗n)(∂a/∂n) / |∇φ|_η, written component-wise
+da_dg_x = (P[0, 0]*da_dn[0] + P[0, 1]*da_dn[1]) / ng
+da_dg_y = (P[1, 0]*da_dn[0] + P[1, 1]*da_dn[1]) / ng
+# (add z component similarly if 3D)
+
+# ---- Three separate integrals exactly like the paper ----
+# 1) ∫ λ^2 ∇w_φ · ∇φ dV, with λ = λ0 a(n̂)
+F1_lambda_sq = (lamda_0**2) * (a**2) * inner(grad(w_phi), grad(phi)) * dx
+
+# 2) ∫ |∇φ|^2 λ w_{φ,x} ∂λ/∂(φ_x) dV  (chain rule part, x)
+F2_chain_x   = (lamda_0**2) * g2 * a * ( w_phi.dx(0) * da_dg_x ) * dx
+
+# 3) ∫ |∇φ|^2 λ w_{φ,y} ∂λ/∂(φ_y) dV  (chain rule part, y)
+F3_chain_y   = (lamda_0**2) * g2 * a * ( w_phi.dx(1) * da_dg_y ) * dx
+
+F_grad_aniso = F1_lambda_sq + F2_chain_x + F3_chain_y
 # ---------------------------------------------------------------
 
-# ---------------- Weak forms ----------------------------------
-R0 = ( tau_0*(phi - phi_0)*w_phi*dx
+# ---------------- Weak forms (with τ(n)) -----------------------
+R0 = ( tau_n*(phi - phi_0)*w_phi*dx     # uses τ(n)=τ0 a^2
      + dt*df*w_phi*dx
      + dt*F_grad_aniso )
 
@@ -105,33 +127,14 @@ R1 = ( (u - u_0)*w_u*dx
 
 R = R0 + R1
 
-# ---------------- Geometry-based Dirichlet BC on u -------------
-def on_boundary(x):
-    return np.logical_or.reduce((
-        np.isclose(x[0], 0.0), np.isclose(x[0], Lx),
-        np.isclose(x[1], 0.0), np.isclose(x[1], Ly)
-    ))
+# Natural Neumann BCs on all sides (paper case) → no Dirichlet BCs
+bcs = []
 
-Vu = ME.sub(1)                       # temperature subspace (mixed)
-Vu_collapse, _ = Vu.collapse()       # standalone scalar space
-
-# Prescribed boundary value (must live in the collapsed space)
-u_bc_fun = fem.Function(Vu_collapse)
-u_bc_fun.x.array[:] = u_inf
-
-# KEY FIX: tuple (subspace, collapsed space)
-dofs_u = locate_dofs_geometrical((Vu, Vu_collapse), on_boundary)
-
-# Build BC on the subspace
-bc_u = fem.dirichletbc(u_bc_fun, dofs_u, Vu)
-# ---------------------------------------------------------------
-
-# Jacobian
+# Jacobian & solver
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
+problem = NonlinearProblem(R, com, bcs=bcs, J=J)
 
-# Solve
-problem = NonlinearProblem(R, com, bcs=[bc_u], J=J)
 solver = NewtonSolver(msh.comm, problem)
 solver.convergence_criterion = "incremental"
 solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
@@ -139,12 +142,11 @@ solver.atol = 1e-12
 solver.max_it = 25
 solver.report = True
 
-# Linear solver options
 ksp = solver.krylov_solver
 opt = PETSc.Options()
 opt_prefix = ksp.getOptionsPrefix()
 opt[f"{opt_prefix}ksp_type"] = "preonly"
-opt[f"{opt_prefix}pc_type"] = "lu"
+opt[f"{opt_prefix}pc_type"]  = "lu"
 opt[f"{opt_prefix}snes_monitor"] = ""
 sys = PETSc.Sys()
 if sys.hasExternalPackage("superlu_dist"):
@@ -155,15 +157,13 @@ ksp.setFromOptions()
 
 # ---------------- Visualization ----------------
 t = 0.0
-T = 20
-
 P0, dof = ME.sub(0).collapse()
 topology, cell_types, x = plot.vtk_mesh(P0)
 grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = com.x.array[dof].real
 grid.set_active_scalars("Phase")
 plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
+plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
 plotter.view_xy(True)
 plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 

@@ -70,9 +70,7 @@ R0 = ( tau_0*phi*w_phi*dx
       - tau_0*phi_0*w_phi*dx
       + dt*df*w_phi*dx 
       + lamda_0**2*dt*inner(grad(phi), grad(w_phi))*dx 
-      + 
-       
-     ) 
+      ) 
 
 # Weak or variational form of Temperature PDE
 R1 = (
@@ -121,7 +119,7 @@ grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = com.x.array[dof].real
 grid.set_active_scalars("Phase")
 plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
+plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
 plotter.view_xy(True)
 plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 
