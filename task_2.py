@@ -16,9 +16,11 @@ import pyvista as pv
 import pyvistaqt as pvq
 import numpy as np
 import time
+from test2 import CoupledDiagnostics
+from test_bc import bc_check   
 
 # Parameter constants used, taken from the ref. paper
-zet = 0  # coupling constant
+zet = 1.6  # coupling constant
 tau_0 = 1   # Characteristic time scale 
 lamda_0 = 1   # characteristic interface thickness
 dt = 0.04   # time step
@@ -80,6 +82,9 @@ dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
 
 
+diag = CoupledDiagnostics(msh, phi, u, lamda_0, zet, tau=tau_0, D=D)
+diag.start(print_fn=PETSc.Sys.Print)
+
 # Solving the nonlinear problem 
 problem = NonlinearProblem(R, com,bcs=[], J=J)
 solver = NewtonSolver(msh.comm, problem)
@@ -123,6 +128,7 @@ plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 while t < T:
     t += dt
     res = solver.solve(com)
+    diag.update(t, print_fn=PETSc.Sys.Print)
     print(f"Step {int(t/dt)}: num iteration: {res[0]}")
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
@@ -132,6 +138,7 @@ while t < T:
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
     plotter.app.processEvents()
 
+diag.finish()
 com.x.scatter_forward()
 grid.point_data["Phase"] = com.x.array[dof].real
 screenshot = None
@@ -139,6 +146,9 @@ if pv.OFF_SCREEN:
     screenshot = "phase.png"
 pv.plot(grid, show_edges=True, screenshot=screenshot)
 
+# ---- run BC test (zero-flux) at the final state ----
+bc_check(msh, phi, u, tol=1e-8, print_fn=PETSc.Sys.Print)
+# ----------------------------------------------------
 
 print("Simulation complete. Close the window to exit.")
 while plotter.app.running:
