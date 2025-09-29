@@ -1,20 +1,21 @@
 from petsc4py import PETSc
+import dolfinx
 from mpi4py import MPI
-import ufl
-import numpy as np
-import pyvista as pv
-import pyvistaqt as pvq
-import time
 
+import ufl
 from basix.ufl import element, mixed_element
 from dolfinx import default_real_type, plot, fem
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
-from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt  # (no dot needed)
+from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt
+import pyvista as pv
+import pyvistaqt as pvq
+import numpy as np
+import time
 
-# ---------------- Parameters (paper) ----------------
+# ---------------- Parameters (paper-faithful defaults) ----------------
 zet = 1.6        # coupling ξ
 tau_0 = 1.0      # base kinetic time-scale τ0
 lamda_0 = 1.0    # λ0
@@ -23,8 +24,10 @@ D = 1.0          # thermal diffusivity
 u_inf = -0.75    # initial undercooling (IC), NOT a boundary clamp
 eps_val = 0.05   # ε4 (anisotropy strength)
 eta_val = 1e-8   # regularization for |∇φ|
+m_val  = 4.0     # m-fold symmetry; this implementation supports m=4
+theta0 = 0.0     # optional rotation angle (rad); keep 0 to match paper
 T = 20.0
-# ----------------------------------------------------
+# ---------------------------------------------------------------------
 
 # Mesh
 Lx, Ly = 100.0, 100.0
@@ -60,7 +63,7 @@ com.sub(1).interpolate(initial_u)
 com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward(); com_0.x.scatter_forward()
 
-# tiny symmetry-breaking noise to φ in the interface band (optional)
+# tiny symmetry-breaking perturbation to φ in the interface band
 P0_phi, dof_phi = ME.sub(0).collapse()
 phi_vals = com.x.array[dof_phi].copy()
 mask = np.abs(phi_vals) < 0.9
@@ -71,53 +74,64 @@ com.x.scatter_forward()
 # ---------------- Free-energy derivative ∂f/∂φ ----------------
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
-# ---------------- Anisotropy a(n̂) & separate weak terms -------
+# ---------------- Angle-form anisotropy without atan2 ----------
+# a(θ)=1+ε cos(4(θ-θ0));  θ is the angle of n̂ = ∇φ/|∇φ|_η.
+# Use identities in terms of (n_x, n_y) so we don't need atan2.
 eps_an = fem.Constant(msh, default_real_type(eps_val))
 eta    = fem.Constant(msh, default_real_type(eta_val))
 
-gphi = grad(phi)                  # ∇φ
-g2   = inner(gphi, gphi)          # |∇φ|^2
-ng   = sqrt(g2 + eta*eta)         # |∇φ|_η
-nHat = gphi / ng                  # n̂
+# interface normal and projector
+gphi = grad(phi)                 # ∇φ
+g2   = inner(gphi, gphi)         # |∇φ|^2
+ng   = sqrt(g2 + eta*eta)        # |∇φ|_η
+nHat = gphi / ng                 # n̂
 
-d = msh.geometry.dim
-I = Identity(d)
-P = I - outer(nHat, nHat)         # projector tangent to n̂
+nx, ny = nHat[0], nHat[1]
+I  = Identity(msh.geometry.dim)
+P  = I - outer(nHat, nHat)
 
-# a(n̂): cubic 4-fold from the paper: a = (1-3ε) + 4ε Σ n_i^4
-if d == 2:
-    a     = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nHat[0]**4 + nHat[1]**4)
-    da_dn = as_vector((16.0*eps_an*nHat[0]**3,
-                       16.0*eps_an*nHat[1]**3))
-else:
-    a     = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nHat[0]**4 + nHat[1]**4 + nHat[2]**4)
-    da_dn = as_vector((16.0*eps_an*nHat[0]**3,
-                       16.0*eps_an*nHat[1]**3,
-                       16.0*eps_an*nHat[2]**3))
+# cos(4θ), sin(4θ) in terms of (nx,ny)
+cos4 = nx**4 - 6*nx**2*ny**2 + ny**4
+sin4 = 4*nx*ny*(nx**2 - ny**2)
 
-# τ(n) = τ0 * a(n)^2  (orientation-dependent kinetic coefficient)
-tau_n = tau_0 * a**2
+# include optional rotation θ0: cos(4(θ-θ0)) = cos4θ*cos4θ0 + sin4θ*sin4θ0
+c0 = fem.Constant(msh, default_real_type(np.cos(4.0*theta0)))
+s0 = fem.Constant(msh, default_real_type(np.sin(4.0*theta0)))
 
-# ∂a/∂(∇φ) = (I − n⊗n)(∂a/∂n) / |∇φ|_η, written component-wise
+# anisotropy magnitude
+a = 1.0 + eps_an * (c0*cos4 + s0*sin4)
+
+# derivatives w.r.t. n components
+dcos4_dn = as_vector((4*nx**3 - 12*nx*ny**2,
+                      4*ny**3 - 12*ny*nx**2))
+dsin4_dn = as_vector((12*nx**2*ny - 4*ny**3,
+                      4*nx**3 - 12*nx*ny**2))
+
+# ∂a/∂n = ε( c0 ∂cos4/∂n + s0 ∂sin4/∂n )
+da_dn = eps_an * (c0*dcos4_dn + s0*dsin4_dn)
+
+# ∂a/∂(∇φ) = (I − n⊗n)(∂a/∂n) / |∇φ|_η, componentwise
 da_dg_x = (P[0, 0]*da_dn[0] + P[0, 1]*da_dn[1]) / ng
 da_dg_y = (P[1, 0]*da_dn[0] + P[1, 1]*da_dn[1]) / ng
-# (add z component similarly if 3D)
+
+# orientation-dependent kinetic coefficient τ(n)=τ0 a^2
+tau_n = tau_0 * a**2
 
 # ---- Three separate integrals exactly like the paper ----
-# 1) ∫ λ^2 ∇w_φ · ∇φ dV, with λ = λ0 a(n̂)
+# 1) ∫ λ^2 ∇wφ · ∇φ dV, with λ = λ0 a
 F1_lambda_sq = (lamda_0**2) * (a**2) * inner(grad(w_phi), grad(phi)) * dx
 
-# 2) ∫ |∇φ|^2 λ w_{φ,x} ∂λ/∂(φ_x) dV  (chain rule part, x)
+# 2) ∫ |∇φ|^2 λ w_{φ,x} ∂λ/∂(φ_x) dV  (∂λ/∂(φ_x) = λ0 * ∂a/∂(φ_x))
 F2_chain_x   = (lamda_0**2) * g2 * a * ( w_phi.dx(0) * da_dg_x ) * dx
 
-# 3) ∫ |∇φ|^2 λ w_{φ,y} ∂λ/∂(φ_y) dV  (chain rule part, y)
+# 3) ∫ |∇φ|^2 λ w_{φ,y} ∂λ/∂(φ_y) dV
 F3_chain_y   = (lamda_0**2) * g2 * a * ( w_phi.dx(1) * da_dg_y ) * dx
 
 F_grad_aniso = F1_lambda_sq + F2_chain_x + F3_chain_y
-# ---------------------------------------------------------------
+# ----------------------------------------------------------------
 
-# ---------------- Weak forms (with τ(n)) -----------------------
-R0 = ( tau_n*(phi - phi_0)*w_phi*dx     # uses τ(n)=τ0 a^2
+# ---------------- Weak forms (using τ(n)) -----------------------
+R0 = ( tau_n*(phi - phi_0)*w_phi*dx
      + dt*df*w_phi*dx
      + dt*F_grad_aniso )
 
@@ -127,7 +141,7 @@ R1 = ( (u - u_0)*w_u*dx
 
 R = R0 + R1
 
-# Natural Neumann BCs on all sides (paper case) → no Dirichlet BCs
+# Natural Neumann BCs (paper case): no Dirichlet BCs
 bcs = []
 
 # Jacobian & solver
