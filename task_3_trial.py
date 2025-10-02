@@ -1,37 +1,47 @@
 from petsc4py import PETSc
 import dolfinx
 from mpi4py import MPI
+import os
+import sys
+import time
 
 import ufl
+import numpy as np
 from basix.ufl import element, mixed_element
 from dolfinx import default_real_type, plot, fem
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
+from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt
-import pyvista as pv
-import pyvistaqt as pvq
-import numpy as np
-import time
+
+# Optional visualization imports - won't fail if not available
+try:
+    import pyvista as pv
+    import pyvistaqt as pvq
+    has_viz = True
+except ImportError:
+    has_viz = False
+    print("Warning: PyVista visualization not available")
 
 # ---------------- Parameters (paper-faithful defaults) ----------------
 zet = 1.6        # coupling ξ
 tau_0 = 1.0      # base kinetic time-scale τ0
 lamda_0 = 1.0    # λ0
-dt = 0.02        # Δt
-D = 1.0          # thermal diffusivity
-u_inf = -0.75    # initial undercooling (IC), NOT a boundary clamp
-eps_val = 0.05   # ε4 (anisotropy strength)
+dt = 0.01        # Δt
+D = 1.5          # thermal diffusivity
+u_inf = -0.9    # initial undercooling (IC), NOT a boundary clamp
+eps_val = 0.1   # ε4 (anisotropy strength)
 eta_val = 1e-8   # regularization for |∇φ|
 m_val  = 4.0     # m-fold symmetry; this implementation supports m=4
 theta0 = 0.0     # optional rotation angle (rad); keep 0 to match paper
-T = 20.0
+T = 100.0
 # ---------------------------------------------------------------------
 
 # Mesh
-Lx, Ly = 100.0, 100.0
-Nx, Ny = 175, 175
+Lx, Ly = 500.0, 500.0
+Nx, Ny = 250, 250
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
@@ -47,7 +57,7 @@ phi_0, u_0 = ufl.split(com_0)
 
 # ---------------- Initial conditions ----------------
 def initial_phi(x):
-    r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)
+    r = np.sqrt((x[0] - Lx/2)**2 + (x[1] - Ly/2)**2)
     return np.where(r < 5.0, 1.0, -1.0)
 
 rng = np.random.default_rng(42)
@@ -169,37 +179,74 @@ elif sys.hasExternalPackage("mumps"):
     opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
 
-# ---------------- Visualization ----------------
+# ---------------- Output setup ----------------
+outdir = "results_dendrite"
+if MPI.COMM_WORLD.rank == 0 and not os.path.isdir(outdir):
+    os.makedirs(outdir, exist_ok=True)
+
+# XDMF output for ParaView visualization
+xdmf_phi = dolfinx.io.XDMFFile(msh.comm, os.path.join(outdir, "phi_series.xdmf"), "w")
+xdmf_u = dolfinx.io.XDMFFile(msh.comm, os.path.join(outdir, "u_series.xdmf"), "w")
+xdmf_phi.write_mesh(msh)
+xdmf_u.write_mesh(msh)
+
+# Setup for live visualization (if available)
 t = 0.0
-P0, dof = ME.sub(0).collapse()
-topology, cell_types, x = plot.vtk_mesh(P0)
-grid = pv.UnstructuredGrid(topology, cell_types, x)
-grid.point_data["Phase"] = com.x.array[dof].real
-grid.set_active_scalars("Phase")
-plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
-plotter.view_xy(True)
-plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
+try:
+    P0, dof = ME.sub(0).collapse()
+    topology, cell_types, x = plot.vtk_mesh(P0)
+    grid = pv.UnstructuredGrid(topology, cell_types, x)
+    grid.point_data["Phase"] = com.x.array[dof].real
+    grid.set_active_scalars("Phase")
+    plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
+    plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
+    plotter.view_xy(True)
+    plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
+    has_window = True
+except Exception as e:
+    print(f"Live visualization not available: {e}")
+    has_window = False
 
 # ---------------- Time loop ----------------
+print(f"Starting simulation, saving results to {outdir}/")
 while t < T:
     t += dt
-    res = solver.solve(com)
-    print(f"Step {int(t/dt)}: num iteration: {res[0]}")
-    com_0.x.array[:] = com.x.array
-    com.x.scatter_forward()
-    grid.point_data["Phase"] = com.x.array[dof].real
-    plotter.remove_actor("timelabel")
-    plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
-    plotter.app.processEvents()
+    try:
+        res = solver.solve(com)
+        print(f"Step {int(t/dt)}: num iteration: {res[0]}")
+        
+        # Update solution
+        com_0.x.array[:] = com.x.array
+        com.x.scatter_forward()
+        
+        # Write solution to file every 10 steps
+        if int(t/dt) % 10 == 0:
+            V_phi, map_phi = ME.sub(0).collapse()
+            V_u, map_u = ME.sub(1).collapse()
+            phi_out = Function(V_phi)
+            u_out = Function(V_u)
+            phi_out.x.array[:] = com.x.array[map_phi]
+            u_out.x.array[:] = com.x.array[map_u]
+            xdmf_phi.write_function(phi_out, t)
+            xdmf_u.write_function(u_out, t)
+        
+        # Try to update visualization if available
+        if has_window:
+            try:
+                grid.point_data["Phase"] = com.x.array[dof].real
+                plotter.remove_actor("timelabel")
+                plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
+                plotter.app.processEvents()
+            except Exception as e:
+                print(f"Visualization update failed: {e}")
+                has_window = False  # Disable future visualization attempts
+                
+    except Exception as e:
+        print(f"Error at step {int(t/dt)}: {e}")
+        break
 
-com.x.scatter_forward()
-grid.point_data["Phase"] = com.x.array[dof].real
-screenshot = None
-if pv.OFF_SCREEN:
-    screenshot = "phase.png"
-pv.plot(grid, show_edges=True, screenshot=screenshot)
-
-print("Simulation complete. Close the window to exit.")
-while plotter.app.running:
-    time.sleep(0.1)
+# Final output
+xdmf_phi.close()
+xdmf_u.close()
+print(f"\nSimulation complete. Results saved to {outdir}/")
+print("You can visualize the results using ParaView:")

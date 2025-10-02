@@ -7,22 +7,22 @@ from dolfinx import default_real_type, log, plot, fem
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.io import XDMFFile
-from dolfinx.mesh import CellType, create_rectangle
+from dolfinx.mesh import CellType, create_rectangle, locate_entities_boundary
 from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner
 import pyvista as pv
 import pyvistaqt as pvq
 
 # -------------------- Parameters --------------------
-zet = 2.5        # Increased coupling for stronger phase-field interaction
-tau_0 = 0.5      # Reduced relaxation time for faster dynamics
-lamda_0 = 1    # Reduced interface width for sharper features
-dt = 0.005       # Smaller timestep for stability
-D = 2.0          # Increased thermal diffusivity
+zet = 1.6
+tau_0 = 1.0
+lamda_0 = 1.0
+dt = 0.04
+D = 1.0
 
 # -------------------- Mesh --------------------
 Lx, Ly = 500.0, 500.0
-Nx, Ny = 250, 250   # big; reduce if memory is tight
+Nx, Ny = 250, 250  
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny], cell_type=CellType.triangle)
 
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
@@ -38,12 +38,10 @@ phi_0, u_0 = ufl.split(com_0)
 # -------------------- Initial conditions --------------------
 def initial_phi(x):
     r = np.sqrt((x[0] - Lx/2.0)**2 + (x[1] - Ly/2.0)**2)
-    # Add small random perturbations to trigger instabilities
-    noise = 0.01 * (2.0 * np.random.random(x.shape[1]) - 1.0)
-    return np.where(r < 5.0, 1.0 + noise, -1.0)
+    return np.where(r < 5.0, 1.0, -1.0)
 
 def initial_u(x):
-    return -1.0 * np.ones(x.shape[1], dtype=default_real_type)  # Increased undercooling
+    return -0.75 * np.ones(x.shape[1], dtype=default_real_type)
 
 com.x.array[:] = 0.0
 com.sub(0).interpolate(initial_phi)
@@ -53,12 +51,22 @@ com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
 
+# ---- tiny interface-localized noise to φ (once) ----
+V_phi_ic, map_phi_ic = ME.sub(0).collapse()
+phi_vec = com.x.array[map_phi_ic].copy()
+rng = np.random.default_rng(1234 + MPI.COMM_WORLD.rank)
+noise = rng.standard_normal(phi_vec.size).astype(com.x.array.dtype)
+phi_vec += (1e-3) * (1.0 - phi_vec**2) * noise   # ~0 in bulk, active near interface
+com.x.array[map_phi_ic]   = phi_vec
+com_0.x.array[map_phi_ic] = phi_vec
+com.x.scatter_forward(); com_0.x.scatter_forward()
+
 # -------------------- Bulk free-energy derivative --------------------
 df = -phi + phi**3 + zet * u * (1 - 2*phi**2 + phi**4)
 
 # -------------------- Anisotropy (4-fold, no rotation) --------------------
-eps = 0.2       # Increased anisotropy strength for more pronounced dendrites
-eta = 1e-8       # Smaller regularization for sharper features
+eps = 0.05
+eta = 1e-12
 
 g   = ufl.variable(ufl.grad(phi))       # ∇φ as UFL variable
 g2  = ufl.inner(g, g)                   # |∇φ|^2
@@ -91,36 +99,35 @@ R = R0 + R1
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
 
+# ---- Dirichlet BC on temperature at outer boundary: u = -0.75 ----
+tdim = msh.topology.dim
+facets = locate_entities_boundary(msh, tdim-1,
+                                  lambda x: np.full(x.shape[1], True, dtype=np.bool_))
+# DOFs on the temperature subspace touching those facets
+dofs_u = fem.locate_dofs_topological(ME.sub(1), tdim-1, facets)
+dofs_u = np.asarray(dofs_u, dtype=np.int32)       # ensure int32
+bc_u = fem.dirichletbc(PETSc.ScalarType(-0.75), dofs_u, ME.sub(1))
+
 # -------------------- Nonlinear solve --------------------
-
-opt = PETSc.Options()
-opt["snes_type"] = "newtonls"
-opt["snes_linesearch_type"] = "bt"        # backtracking
-opt["snes_linesearch_damping"] = "0.8"
-opt["snes_monitor_short"] = ""            # concise residual log (optional)
-# opt["snes_view"] = ""                   # uncomment to print SNES setup
-
-problem = NonlinearProblem(R, com, bcs=[], J=J)
-solver  = NewtonSolver(msh.comm, problem)
-solver.convergence_criterion = "Residual"
-solver.rtol = 1e-8
-solver.atol = 1e-10
-solver.max_it = 40
+problem = NonlinearProblem(R, com, bcs=[bc_u], J=J)
+solver = NewtonSolver(msh.comm, problem)
+solver.convergence_criterion = "incremental"
+solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
+solver.atol = 1e-12
+solver.max_it = 25
 solver.report = True
 
-# Linear solver (KSP/PC)
 ksp = solver.krylov_solver
-p = ksp.getOptionsPrefix()                # prefix applies ONLY to KSP/PC
-opt[f"{p}ksp_type"] = "preonly"
-opt[f"{p}pc_type"]  = "lu"
-# opt[f"{p}ksp_monitor_short"] = ""       # optional linear monitor
+opt = PETSc.Options(); opt_prefix = ksp.getOptionsPrefix()
+opt[f"{opt_prefix}ksp_type"] = "preonly"
+opt[f"{opt_prefix}pc_type"] = "lu"
+opt[f"{opt_prefix}snes_monitor"] = ""
 sys = PETSc.Sys()
 if sys.hasExternalPackage("superlu_dist"):
-    opt[f"{p}pc_factor_mat_solver_type"] = "superlu_dist"
+    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "superlu_dist"
 elif sys.hasExternalPackage("mumps"):
-    opt[f"{p}pc_factor_mat_solver_type"] = "mumps"
+    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
-
 
 # -------------------- ParaView I/O (write EVERY step) --------------------
 outdir = "results_task3"
@@ -159,7 +166,7 @@ plotter.add_text("time: 0.00", font_size=10, name="timelabel")
 
 # -------------------- Time loop --------------------
 t = 0.0
-T = 100.0      # Longer simulation time to allow dendrites to develop
+T = 20.0
 step = 0
 VIEW_EVERY = 100  # refresh PyVista every 100 steps
 
@@ -171,7 +178,6 @@ while t < T:
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
     write_to_xdmf(t)
-
     # ---- Update live view ONLY every 100 steps ----
     if step % VIEW_EVERY == 0:
         grid.point_data["Phase"] = com.x.array[dof].real
@@ -179,14 +185,13 @@ while t < T:
         plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
         plotter.app.processEvents()
 
-
+# final write and close
 write_to_xdmf(t)
 xdmf_phi.close(); xdmf_u.close()
 
 # final static plot (optional off-screen)
 grid.point_data["Phase"] = com.x.array[dof].real
 screenshot = None
-
 if pv.OFF_SCREEN:
     screenshot = os.path.join(outdir, "phase_last.png")
 pv.plot(grid, show_edges=True, screenshot=screenshot)
