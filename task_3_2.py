@@ -18,16 +18,16 @@ from dolfinx.mesh import locate_entities_boundary
 zet = 1.9        # Increased coupling parameter for stronger phase-temperature interaction
 tau_0 = 1.0
 lamda_0 = 1.0    # Back to original interface width
-dt = 0.01        # Smaller timestep for stability
+dt = 0.001        # Smaller timestep for stability
 D = 1.5          # Original diffusion coefficient
 
 # -------------------- Mesh --------------------
-Lx, Ly = 250, 250
-Nx, Ny = 125, 125
+Lx, Ly = 100, 100
+Nx, Ny = 200, 200
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny], cell_type=CellType.triangle)
 
 # φ: P2, u: P1
-Pphi = element("Lagrange", msh.basix_cell(), 2, dtype=default_real_type)  # φ: P2
+Pphi = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)  # φ: P2
 Pu   = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)  # u: P1
 ME   = functionspace(msh, mixed_element([Pphi, Pu]))
 
@@ -41,7 +41,7 @@ phi_0, u_0 = ufl.split(com_0)
 # -------------------- Initial conditions --------------------
 def initial_phi(x):
     r = np.sqrt((x[0] - Lx/2.0)**2 + (x[1] - Ly/2.0)**2)
-    return np.where(r < 3, 1.0, -1.0)
+    return np.where(r < 2, 1.0, -1.0)
 
 def initial_u(x):
     return -0.9 * np.ones(x.shape[1], dtype=default_real_type)  # Increased undercooling
@@ -59,7 +59,7 @@ df = -phi + phi**3 + zet * u * (1 - 2*phi**2 + phi**4)
 
 # -------------------- Anisotropy (your |φ|⁴ variant, explicit split) --------------------
 eps = 0.06    # Back to original anisotropy
-eta = 0.1     # Increased regularization
+eta = 0.00001     # Increased regularization
 
 g    = ufl.variable(ufl.grad(phi))
 gx, gy = g[0], g[1]
@@ -80,24 +80,25 @@ dxQ = dx(metadata={"quadrature_degree": 6})
 eps_row = PETSc.ScalarType(1e-6)  # Stronger regularization for matrix stability
 
 R0 = (
-    tau_eff * (phi - phi_0) * w_phi * dxQ
-  + dt * df * w_phi * dxQ
-  + dt * (lam_n**2) * ufl.inner(ufl.grad(w_phi), g) * dxQ
-  + dt * Q * (w_phi.dx(0)*qx + w_phi.dx(1)*qy) * dxQ
-  + eps_row * phi * w_phi * dxQ 
+    tau_eff * (phi - phi_0) * w_phi * dx
+  + dt * df * w_phi * dx
+  + dt * (lam_n**2) * ufl.inner(ufl.grad(w_phi), g) * dx
+  + dt * Q * (w_phi.dx(0)*qx + w_phi.dx(1)*qy) * dx
+  #+ eps_row * phi * w_phi * dx 
 )
 
 R1 = (
-    (u - u_0) * w_u * dxQ
-  - 0.5 * (phi - phi_0) * w_u * dxQ
-  + dt * D * inner(grad(u), grad(w_u)) * dxQ
-  + eps_row * u * w_u * dxQ
+    (u - u_0) * w_u * dx
+  - 0.5 * (phi - phi_0) * w_u * dx
+  + dt * D * inner(grad(u), grad(w_u)) * dx
+  #+ eps_row * u * w_u * dx
 )
 
 R = R0 + R1
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
 
+'''
 # --- Dirichlet BC on temperature: u = -0.90 on outer boundary ---
 tdim = msh.topology.dim
 facets = locate_entities_boundary(msh, tdim-1, lambda x: np.full(x.shape[1], True, dtype=np.bool_))
@@ -105,7 +106,7 @@ dofs_u = fem.locate_dofs_topological(ME.sub(1), tdim-1, facets).astype(np.int32)
 bc_u   = fem.dirichletbc(PETSc.ScalarType(-0.9), dofs_u, ME.sub(1))  # Increased boundary undercooling
 if dofs_u.size == 0 and MPI.COMM_WORLD.rank == 0:
     raise RuntimeError("No boundary DOFs found for u. Check locate_entities_boundary().")
-
+'''
 # -------------------- Nonlinear solve --------------------
 opt = PETSc.Options()
 opt["snes_type"] = "newtonls"
@@ -143,7 +144,7 @@ if MPI.COMM_WORLD.rank == 0 and not os.path.isdir(outdir):
 V_phi_high, map_phi = ME.sub(0).collapse()  # φ space is P2
 V_u,        map_u   = ME.sub(1).collapse()  # u space is P1
 
-# IO spaces and functions  (FIXED: use functionspace(...), not fem.FunctionSpace)
+
 V_phi_io = functionspace(msh, ("Lagrange", 1))      # P1 "IO" space for φ
 phi_high = Function(V_phi_high)                     # holder for φ (P2)
 phi_io   = Function(V_phi_io); phi_io.name = "phi"  # what we write (P1)

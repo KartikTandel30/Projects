@@ -29,8 +29,8 @@ except ImportError:
 zet = 1.6        # coupling ξ
 tau_0 = 1.0      # base kinetic time-scale τ0
 lamda_0 = 1.0    # λ0
-dt = 0.01        # Δt
-D = 1.5          # thermal diffusivity
+dt = 0.001        # Δt
+D = 1          # thermal diffusivity
 u_inf = -0.9    # initial undercooling (IC), NOT a boundary clamp
 eps_val = 0.1   # ε4 (anisotropy strength)
 eta_val = 1e-8   # regularization for |∇φ|
@@ -40,7 +40,7 @@ T = 100.0
 # ---------------------------------------------------------------------
 
 # Mesh
-Lx, Ly = 500.0, 500.0
+Lx, Ly = 100.0, 100.0
 Nx, Ny = 250, 250
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
@@ -58,7 +58,7 @@ phi_0, u_0 = ufl.split(com_0)
 # ---------------- Initial conditions ----------------
 def initial_phi(x):
     r = np.sqrt((x[0] - Lx/2)**2 + (x[1] - Ly/2)**2)
-    return np.where(r < 5.0, 1.0, -1.0)
+    return np.where(r < 2.5, 1.0, -1.0)
 
 rng = np.random.default_rng(42)
 def initial_u(x):
@@ -93,7 +93,7 @@ eta    = fem.Constant(msh, default_real_type(eta_val))
 # interface normal and projector
 gphi = grad(phi)                 # ∇φ
 g2   = inner(gphi, gphi)         # |∇φ|^2
-ng   = sqrt(g2 + eta*eta)        # |∇φ|_η
+ng   = sqrt(g2 ) + eta        # |∇φ|_η
 nHat = gphi / ng                 # n̂
 
 nx, ny = nHat[0], nHat[1]

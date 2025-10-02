@@ -19,17 +19,17 @@ import time
 zet = 1.6        # coupling ξ
 tau_0 = 1.0      # base kinetic time-scale τ0
 lamda_0 = 1.0    # λ0
-dt = 0.02        # Δt
+dt = 0.01        # Δt
 D = 1.0          # thermal diffusivity
-u_inf = -0.75    # initial undercooling (IC), NOT a boundary clamp
-eps_val = 0.05   # ε4 (anisotropy strength)
+u_inf = -0.9    # initial undercooling (IC), NOT a boundary clamp
+eps_val = 0.08   # ε4 (anisotropy strength)
 eta_val = 1e-8   # regularization for |∇φ|
-T = 20.0
+T = 50.0
 # ---------------------------------------------------------------------
 
 # Mesh
 Lx, Ly = 100.0, 100.0
-Nx, Ny = 175, 175
+Nx, Ny = 200, 200
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
@@ -46,7 +46,7 @@ phi_0, u_0 = ufl.split(com_0)
 # ---------------- Initial conditions ----------------
 def initial_phi(x):
     r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)
-    return np.where(r < 5.0, 1.0, -1.0)
+    return np.where(r < 2.0, 1.0, -1.0)
 
 rng = np.random.default_rng(42)
 def initial_u(x):
