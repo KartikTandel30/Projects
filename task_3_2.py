@@ -7,7 +7,7 @@ from dolfinx import default_real_type, log, plot, fem
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.io import XDMFFile
-from dolfinx.mesh import CellType, create_rectangle
+from dolfinx.mesh import CellType, create_rectangle, create_unit_square
 from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner
 import pyvista as pv
@@ -24,24 +24,28 @@ D = 1.5          # Original diffusion coefficient
 # -------------------- Mesh --------------------
 Lx, Ly = 100, 100
 Nx, Ny = 200, 200
-msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny], cell_type=CellType.triangle)
-
+#msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny], cell_type=CellType.triangle)
+msh = create_unit_square(MPI.COMM_WORLD, Lx, Ly, CellType.triangle)
 # φ: P2, u: P1
-Pphi = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)  # φ: P2
-Pu   = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)  # u: P1
-ME   = functionspace(msh, mixed_element([Pphi, Pu]))
+P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
+ME = functionspace(msh, mixed_element([P1, P1]))
+
 
 w_phi, w_u = ufl.TestFunctions(ME)
-com   = Function(ME)   # n+1
-com_0 = Function(ME)   # n
-
+com   = Function(ME)
+com_0 = Function(ME)
 phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
 # -------------------- Initial conditions --------------------
+'''
 def initial_phi(x):
     r = np.sqrt((x[0] - Lx/2.0)**2 + (x[1] - Ly/2.0)**2)
     return np.where(r < 2, 1.0, -1.0)
+'''
+def initial_phi(x):
+    r = np.sqrt((x[0] - 0.5)**2 + (x[1] - 0.5)**2)
+    return np.where(r < 0.05, 1.0, -1.0)
 
 def initial_u(x):
     return -0.9 * np.ones(x.shape[1], dtype=default_real_type)  # Increased undercooling
@@ -58,7 +62,7 @@ com_0.x.scatter_forward()
 df = -phi + phi**3 + zet * u * (1 - 2*phi**2 + phi**4)
 
 # -------------------- Anisotropy (your |φ|⁴ variant, explicit split) --------------------
-eps = 0.06    # Back to original anisotropy
+eps = 0.2    # Back to original anisotropy
 eta = 0.00001     # Increased regularization
 
 g    = ufl.variable(ufl.grad(phi))
@@ -76,7 +80,6 @@ qy = 16*eps * gy**3 / den_phi
 Q  = (lamda_0**2) * g2 * a_s_phi
 
 # -------------------- Weak forms --------------------
-dxQ = dx(metadata={"quadrature_degree": 6})
 eps_row = PETSc.ScalarType(1e-6)  # Stronger regularization for matrix stability
 
 R0 = (
@@ -108,69 +111,31 @@ if dofs_u.size == 0 and MPI.COMM_WORLD.rank == 0:
     raise RuntimeError("No boundary DOFs found for u. Check locate_entities_boundary().")
 '''
 # -------------------- Nonlinear solve --------------------
-opt = PETSc.Options()
-opt["snes_type"] = "newtonls"
-opt["snes_linesearch_type"] = "basic"  # Changed to basic linesearch
-opt["snes_linesearch_damping"] = "0.5"  # More conservative damping
-opt["snes_monitor_short"] = ""   # optional
-opt["snes_max_it"] = "50"       # Increased max iterations
-
-problem = NonlinearProblem(R, com, bcs=[bc_u], J=J)
-solver  = NewtonSolver(msh.comm, problem)
-solver.convergence_criterion = "residual"  # Changed to residual-based criterion
-solver.rtol = 1e-6  # Relaxed tolerance
-solver.atol = 1e-8  # Relaxed tolerance
-solver.max_it = 50  # Increased max iterations
+# Solver
+problem = NonlinearProblem(R, com, bcs=[], J=J)
+solver = NewtonSolver(msh.comm, problem)
+solver.convergence_criterion = "residual"
+solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
+solver.atol = 1e-12
+solver.max_it = 25
 solver.report = True
 
-# Linear solver (KSP/PC)
 ksp = solver.krylov_solver
-p = ksp.getOptionsPrefix()
-opt[f"{p}ksp_type"] = "preonly"
-opt[f"{p}pc_type"]  = "lu"
+opt = PETSc.Options()
+opt_prefix = ksp.getOptionsPrefix()
+opt[f"{opt_prefix}ksp_type"] = "preonly"
+opt[f"{opt_prefix}pc_type"] = "lu"
 sys = PETSc.Sys()
 if sys.hasExternalPackage("superlu_dist"):
-    opt[f"{p}pc_factor_mat_solver_type"] = "superlu_dist"
+    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "superlu_dist"
 elif sys.hasExternalPackage("mumps"):
-    opt[f"{p}pc_factor_mat_solver_type"] = "mumps"
+    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
 
 #------------------- ParaView I/O (write EVERY step) --------------------
-outdir = "results_task3"
-if MPI.COMM_WORLD.rank == 0 and not os.path.isdir(outdir):
-    os.makedirs(outdir, exist_ok=True)
+file = XDMFFile(MPI.COMM_WORLD, "output_task_3.xdmf", "w")
+file.write_mesh(msh)
 
-# Collapse mixed subspaces
-V_phi_high, map_phi = ME.sub(0).collapse()  # φ space is P2
-V_u,        map_u   = ME.sub(1).collapse()  # u space is P1
-
-
-V_phi_io = functionspace(msh, ("Lagrange", 1))      # P1 "IO" space for φ
-phi_high = Function(V_phi_high)                     # holder for φ (P2)
-phi_io   = Function(V_phi_io); phi_io.name = "phi"  # what we write (P1)
-u_out    = Function(V_u);       u_out.name  = "u"   # u already P1
-
-xdmf_phi = XDMFFile(msh.comm, os.path.join(outdir, "phi_series.xdmf"), "w")
-xdmf_u   = XDMFFile(msh.comm, os.path.join(outdir, "u_series.xdmf"), "w")
-xdmf_phi.write_mesh(msh)
-xdmf_u.write_mesh(msh)
-
-def write_to_xdmf(t: float):
-    # fill φ (P2) from mixed vector, then interpolate to P1 for output
-    phi_high.x.array[:] = com.x.array[map_phi]
-    phi_high.x.scatter_forward()
-    phi_io.interpolate(phi_high)
-
-    # fill u (P1) directly
-    u_out.x.array[:] = com.x.array[map_u]
-    u_out.x.scatter_forward()
-
-    # write
-    xdmf_phi.write_function(phi_io, t)
-    xdmf_u.write_function(u_out, t)
-
-# initial write (t=0)
-write_to_xdmf(0.0)
 
 # -------------------- Live viz --------------------
 P0, dof = ME.sub(0).collapse()
@@ -188,7 +153,8 @@ t = 0.0
 T = 50.0
 step = 0
 VIEW_EVERY = 100
-
+phi_sub = com.sub(0)
+file.write_function(phi_sub, 0.0)
 while t < T:
     t += dt
     step += 1
@@ -196,7 +162,7 @@ while t < T:
     print(f"Step {int(t/dt)}: num iteration: {res[0]}")
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
-    write_to_xdmf(t)
+    file.write_function(phi_sub, t)
 
     # live view
     grid.point_data["Phase"] = com.x.array[dof].real
@@ -205,8 +171,7 @@ while t < T:
     plotter.app.processEvents()
 
 # final write and close
-write_to_xdmf(t)
-xdmf_phi.close(); xdmf_u.close()
+file.close()
 
 # optional static plot
 grid.point_data["Phase"] = com.x.array[dof].real

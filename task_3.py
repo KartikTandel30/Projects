@@ -56,6 +56,7 @@ com_0.x.scatter_forward()
 # -------------------- Bulk free-energy derivative --------------------
 df = -phi + phi**3 + zet * u * (1 - 2*phi**2 + phi**4)
 
+'''
 # -------------------- Anisotropy (4-fold, no rotation) --------------------
 eps = 0.2       # Increased anisotropy strength for more pronounced dendrites
 eta = 1e-8       # Smaller regularization for sharper features
@@ -73,6 +74,15 @@ Fgrad  = 0.5 * (lam_n**2) * g2          # ½ λ(n)^2 |∇φ|^2
 q      = ufl.diff(Fgrad, g)             # λ^2 ∇φ + |∇φ|^2 λ ∂λ/∂(∇φ)
 
 tau_eff = tau_0 * a_s**2                # anisotropic kinetics (use tau_0 if undesired)
+'''
+# -------------------- Anisotropy (your |φ|⁴ variant, explicit split) --------------------
+G = ufl.grad(phi)
+gx, gy = G[0], G[1]
+theta = ufl.atan_2(gy, gx + PETSc.ScalarType(1e-12))
+ang = params.m * (theta - params.theta0)
+a = 1.0 + params.eps * ufl.cos(ang)
+ap = - params.eps * params.m * ufl.sin(ang)
+A = a*a*G + ufl.as_vector((-a*ap*gy, a*ap*gx))
 
 # -------------------- Weak forms --------------------
 R0 = (

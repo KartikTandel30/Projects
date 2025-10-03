@@ -9,7 +9,7 @@ from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
-from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt
+from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, sin, cos, atan2
 import pyvista as pv
 import pyvistaqt as pvq
 import numpy as np
@@ -19,17 +19,19 @@ import time
 zet = 1.6        # coupling ξ
 tau_0 = 1.0      # base kinetic time-scale τ0
 lamda_0 = 1.0    # λ0
-dt = 0.01        # Δt
+dt = 0.02        # Δt
 D = 1.0          # thermal diffusivity
-u_inf = -0.9    # initial undercooling (IC), NOT a boundary clamp
+u_inf = -0.75    # initial undercooling (IC), NOT a boundary clamp
 eps_val = 0.05   # ε4 (anisotropy strength)
 eta_val = 1e-8   # regularization for |∇φ|
-T = 50.0
+m_val  = 4.0     # m-fold symmetry (4 for dendrites)
+theta0 = 0.0     # optional rotation angle (rad); keep 0 to match paper
+T = 20.0
 # ---------------------------------------------------------------------
 
 # Mesh
 Lx, Ly = 100.0, 100.0
-Nx, Ny = 100, 100
+Nx, Ny = 175, 175
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
@@ -46,7 +48,7 @@ phi_0, u_0 = ufl.split(com_0)
 # ---------------- Initial conditions ----------------
 def initial_phi(x):
     r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)
-    return np.where(r < 2.0, 1.0, -1.0)
+    return np.where(r < 5.0, 1.0, -1.0)
 
 rng = np.random.default_rng(42)
 def initial_u(x):
@@ -72,37 +74,33 @@ com.x.scatter_forward()
 # ---------------- Free-energy derivative ∂f/∂φ ----------------
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
-# ---------------- Anisotropy via n̂-polynomials (only this) ----
+# ---------------- Anisotropy via angle a(θ)=1+ε cos(mθ) --------
 eps_an = fem.Constant(msh, default_real_type(eps_val))
 eta    = fem.Constant(msh, default_real_type(eta_val))
+m_fold = fem.Constant(msh, default_real_type(m_val))
+theta0_c = fem.Constant(msh, default_real_type(theta0))
 
 gphi = grad(phi)                 # ∇φ = (φx, φy)
+px, py = gphi[0], gphi[1]
 g2   = inner(gphi, gphi)         # |∇φ|^2
-ng   = sqrt(g2 + eta*eta)        # |∇φ|_η
-nHat = gphi / ng                 # n̂
+den  = g2 + eta*eta              # regularised |∇φ|^2 for atan2 derivatives
 
-nx, ny = nHat[0], nHat[1]
-I  = Identity(msh.geometry.dim)
-P  = I - outer(nHat, nHat)       # projector tangent to n̂
+# interface angle
+theta = atan2(py, px) - theta0_c
 
-# fourfold anisotropy: a(θ)=1+ε cos(4θ) with cos4θ in terms of (nx,ny)
-cos4 = nx**4 - 6*nx**2*ny**2 + ny**4
-a    = 1.0 + eps_an * cos4
+# anisotropy magnitude and its θ-derivative
+a       = 1.0 + eps_an * cos(m_fold * theta)
+a_theta = -eps_an * m_fold * sin(m_fold * theta)
 
-# ∂a/∂n (needed for chain rule)
-dcos4_dn = as_vector((4*nx**3 - 12*nx*ny**2,
-                      4*ny**3 - 12*ny*nx**2))
-da_dn = eps_an * dcos4_dn
-
-# ∂a/∂(∇φ) = (I − n⊗n)(∂a/∂n) / |∇φ|_η  → components for x,y
-da_dg_x = (P[0, 0]*da_dn[0] + P[0, 1]*da_dn[1]) / ng
-da_dg_y = (P[1, 0]*da_dn[0] + P[1, 1]*da_dn[1]) / ng
+# ∂a/∂(∇φ) using chain rule: ∂θ/∂(φx,φy) = (-φy/den, φx/den)
+da_dg_x = a_theta * (-py / den)  # = ∂a/∂(∂φ/∂x)
+da_dg_y = a_theta * ( px / den)  # = ∂a/∂(∂φ/∂y)
 
 # orientation-dependent kinetic coefficient τ(n)=τ0 a^2
 tau_n = tau_0 * a**2
 
 # ---- Three separate integrals exactly like the paper ----
-# 1) ∫ λ^2 ∇wφ · ∇φ dV, with λ = λ0 a
+# 1) ∫ λ^2 ∇wφ · ∇φ dV, with λ = λ0 a(θ)
 F1_lambda_sq = (lamda_0**2) * (a**2) * inner(grad(w_phi), grad(phi)) * dx
 
 # 2) ∫ |∇φ|^2 λ w_{φ,x} ∂λ/∂(φ_x) dV  (∂λ/∂(φ_x) = λ0 * da_dg_x)

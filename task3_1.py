@@ -17,11 +17,11 @@ import pyvistaqt as pvq
 zet = 1.6
 tau_0 = 1.0
 lamda_0 = 1.0
-dt = 0.04
+dt = 0.01
 D = 1.0
 
 # -------------------- Mesh --------------------
-Lx, Ly = 500.0, 500.0
+Lx, Ly = 100.0, 100.0
 Nx, Ny = 250, 250  
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny], cell_type=CellType.triangle)
 

@@ -23,14 +23,14 @@ from test_bc import bc_check
 zet = 1.6  # coupling constant
 tau_0 = 1   # Characteristic time scale 
 lamda_0 = 1   # characteristic interface thickness
-dt = 0.04   # time step
+dt = 0.001   # time step
 D = 1
 
 # Create mesh
 '''msh = create_unit_square(MPI.COMM_WORLD, 10, 10, CellType.triangle)'''
 msh = create_rectangle(MPI.COMM_WORLD,
                        [[0.0, 0.0], [100, 100]],  # New domain corners
-                       [50, 50],               # More elements for resolution
+                       [200, 200],               # More elements for resolution
                        cell_type=CellType.triangle) 
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh,mixed_element( [P1, P1]))
@@ -45,7 +45,7 @@ phi_0, u_0, = ufl.split(com_0)
 
 def initial_phi(x):
     r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)  # Center at (250, 250)
-    return np.where(r < 5.0, 1.0, -1.0)
+    return np.where(r < 2.5, 1.0, -1.0)
 
 '''
 def initial_phi(x):
@@ -120,7 +120,7 @@ grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = com.x.array[dof].real
 grid.set_active_scalars("Phase")
 plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
+plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
 plotter.view_xy(True)
 plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 
@@ -132,19 +132,20 @@ while t < T:
     print(f"Step {int(t/dt)}: num iteration: {res[0]}")
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
+    """
     #print(f"min(phi): {phi.x.array.min():.4f}, max(phi): {phi.x.array.max():.4f}")
     grid.point_data["Phase"] = com.x.array[dof].real
     plotter.remove_actor("timelabel")
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
     plotter.app.processEvents()
-
+    """
 diag.finish()
 com.x.scatter_forward()
 grid.point_data["Phase"] = com.x.array[dof].real
 screenshot = None
 if pv.OFF_SCREEN:
     screenshot = "phase.png"
-pv.plot(grid, show_edges=True, screenshot=screenshot)
+pv.plot(grid, show_edges=False, screenshot=screenshot)
 
 # ---- run BC test (zero-flux) at the final state ----
 bc_check(msh, phi, u, tol=1e-8, print_fn=PETSc.Sys.Print)
