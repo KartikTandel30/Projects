@@ -79,10 +79,11 @@ da_dn = as_vector((16.0*eps_an*nHat[0]**3, 16.0*eps_an*nHat[1]**3))
 da_dg = dot(P, da_dn) / ng
 q_phi = lamda_0**2 * (a**2 * gphi + g2 * a * da_dg)
 F_grad_aniso = inner(q_phi, grad(w_phi)) * dx
+tau = tau_0 * a**2
 # ----------------------------------------------
 
 # Weak forms
-R0 = ( tau_0*(phi - phi_0)*w_phi*dx
+R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*df*w_phi*dx
      + dt*F_grad_aniso )
 
