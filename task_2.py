@@ -139,6 +139,7 @@ while t < T:
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
     plotter.app.processEvents()
     """
+    
 diag.finish()
 com.x.scatter_forward()
 grid.point_data["Phase"] = com.x.array[dof].real
