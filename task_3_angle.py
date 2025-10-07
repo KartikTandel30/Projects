@@ -1,7 +1,7 @@
 from petsc4py import PETSc
 import dolfinx
 from mpi4py import MPI
-
+import os
 import ufl
 from basix.ufl import element, mixed_element
 from dolfinx import default_real_type, plot, fem
@@ -18,16 +18,22 @@ import time
 from numpy.random import default_rng  # ADD THIS
 rng = default_rng(12345)
 
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 
 t_start = time.time()
 # ---------------- Parameters (paper-faithful defaults) ----------------
 zet = 1.6        # coupling ξ
 tau_0 = 1.0      # base kinetic time-scale τ0
 lamda_0 = 1.0    # λ0
-dt = 0.02        # Δt
+       # Δt
 D = 1.0          # thermal diffusivity
-T = 10.0
 t = 0.0
+T = 300.0
+step = 0
+dt0 = 0.02
+
+dt_min = 1e-3
+dt_max = dt0
 STRIDE = 10       # save every STRIDE time steps
 # ---------------------------------------------------------------------
 
@@ -78,7 +84,7 @@ eps_an = fem.Constant(msh, default_real_type(0.1))
 eta    = fem.Constant(msh, default_real_type(1e-6))
 K =  fem.Constant(msh, default_real_type(0.5))
 m =  fem.Constant(msh, default_real_type(4))# reuse your 'm' variable: set m = 4 or 6 above
-
+dt  = fem.Constant(msh, default_real_type(dt0))
 theta_c = 0.0           # rotate arms by this angle
 
 gphi = grad(phi)
@@ -111,7 +117,7 @@ R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*F_grad_aniso )
 
 R1 = ( (u - u_0)*w_u*dx
-     - 0.5*(phi - phi_0)*w_u*dx
+     - K*(phi - phi_0)*w_u*dx
      + dt*D*inner(grad(u), grad(w_u))*dx )
 
 R = R0 + R1
@@ -145,33 +151,79 @@ elif sys.hasExternalPackage("mumps"):
 ksp.setFromOptions()
 
 
-file = XDMFFile(MPI.COMM_WORLD, "output_task_3_angle.xdmf", "w")
-file.write_mesh(msh)
+out = "output_task_3_angle.xdmf"
+with XDMFFile(MPI.COMM_WORLD, out, "w") as xf:
+    xf.write_mesh(msh)
+    xf.write_function(com.sub(0), 0.0)   # phi at t=0
+
+def save_frame(t_save: float):
+    with XDMFFile(MPI.COMM_WORLD, out, "a") as xf:
+        xf.write_function(com.sub(0), t_save)
 
 
-# Time
+# ---------- Time loop with adaptive dt (shrink/grow) ----------
 t = 0.0
-T = 300.0
 step = 0
-# Initial output fields (t=0)
-phi_sub = com.sub(0)
-file.write_function(phi_sub, 0.0)
-
+dt_min = 1e-3
+dt_max = dt0
+grow_factor = 1.5
+grow_every  = 3
+its_ok      = 4
+success_streak = 0
 
 while t < T:
-    t += dt
+    # try this time level, halving dt on failure (retry from last good state)
+    retries = 0
+    while True:
+        its, converged = solver.solve(com)
+        if converged:
+            break
+
+        # failure → shrink dt and retry from last good
+        new_dt = 0.5 * float(dt.value)
+        if new_dt < dt_min:
+            # write last good and exit cleanly
+            t_good = t
+            if msh.comm.rank == 0:
+                print(f"[FAIL] dt<{dt_min}. Writing last good frame at t={t_good:.4g} and exiting.")
+            save_frame(t_good)
+            raise RuntimeError("Newton failed and dt_min reached.")
+
+        if msh.comm.rank == 0:
+            print(f"[retry] Newton failed → dt {float(dt.value):.4g} → {new_dt:.4g}")
+        dt.value = new_dt
+        com.x.array[:] = com_0.x.array
+        com.x.scatter_forward()
+        success_streak = 0
+        retries += 1
+
+    # success → advance time/state
+    t += float(dt.value)
     step += 1
+    if msh.comm.rank == 0:
+        print(f"Step {step}: Newton iterations = {its} (OK)  dt={float(dt.value):.4g}")
 
-    its, converged = solver.solve(com)
-    print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
-
+    # update reference state
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
+
+    # grow dt back if solves are easy
+    if its <= its_ok:
+        success_streak += 1
+    else:
+        success_streak = 0
+
+    if success_streak >= grow_every and float(dt.value) < dt_max:
+        old = float(dt.value)
+        dt.value = min(grow_factor * old, dt_max)
+        success_streak = 0
+        if msh.comm.rank == 0:
+            print(f"[grow] dt {old:.4g} → {float(dt.value):.4g}")
+
+    # save periodically
     if step % STRIDE == 0:
-        file.write_function(phi_sub, t)
-        
+        save_frame(t)
 
 if msh.comm.rank == 0:
-    print("Open in ParaView. File -> Open -> output_task_3.xdmf")
-if msh.comm.rank == 0:
+    print("Open in ParaView → output_task_3_angle.xdmf → Apply → time slider.")
     print(f"Total runtime: {time.time()-t_start:.2f}s")

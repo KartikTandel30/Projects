@@ -39,7 +39,7 @@ phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
 m = 4             # set to your anisotropy (2,4,6,...)
-R0 = 21         # base radius (your seed)
+R0 = 5         # base radius (your seed)
 epsR = 0.02       # 1–3% wobble
 theta0 = 0.0      # rotation; use np.pi/4 for 45°
 
@@ -139,10 +139,11 @@ file.write_mesh(msh)
 
 # Time
 t = 0.0
-T = 300.0
+T = 800.0
 step = 0
 # Initial output fields (t=0)
 phi_sub = com.sub(0)
+phi_sub.name = "phi"
 file.write_function(phi_sub, 0.0)
 
 
