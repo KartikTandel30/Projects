@@ -1,56 +1,68 @@
 from petsc4py import PETSc
+import os
 import dolfinx
 from mpi4py import MPI
-
 import ufl
 from basix.ufl import element, mixed_element
-from dolfinx import default_real_type, plot, fem
+from dolfinx import default_real_type, fem, plot
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
-from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, sin, cos, atan2, dot
 from dolfinx.io import XDMFFile
-import pyvista as pv
-import pyvistaqt as pvq
+import random
+from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot
 import numpy as np
 import time
 from numpy.random import default_rng  # ADD THIS
-rng = default_rng(12345)
-
+rng = default_rng(12345) 
 
 t_start = time.time()
-# ---------------- Parameters (paper-faithful defaults) ----------------
-zet = 1.6        # coupling ξ
-tau_0 = 1.0      # base kinetic time-scale τ0
-lamda_0 = 1.0    # λ0
-dt = 0.02        # Δt
-D = 1.0          # thermal diffusivity
-T = 10.0
-t = 0.0
-STRIDE = 10       # save every STRIDE time steps
-# ---------------------------------------------------------------------
+# ---------------- Parameters ----------------
+zet = 1.6
+tau_0 = 1
+lamda_0 = 1
+dt = 0.01
+D = 1
 
+STRIDE = 20  # save every STRIDE time steps
 # Mesh
-Lx, Ly = 250.0, 250.0
-Nx, Ny = 250, 250
+Lx, Ly = 250, 250
+Nx, Ny = 250,250
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, mixed_element([P1, P1]))
 
-# Unknowns / tests
 w_phi, w_u = ufl.TestFunctions(ME)
 com   = Function(ME)
 com_0 = Function(ME)
 phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
-# ---------------- Initial conditions ----------------
+
+m = 4             # set to your anisotropy (2,4,6,...)
+R0 = 5        # base radius (your seed)
+epsR = 0.02       # 1–3% wobble
+theta0 = 0.0      # rotation; use np.pi/4 for 45°
+
 def initial_phi(x):
-    r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)
-    return np.where(r < 5.0, 1.0, -1.0)
+    xc = x[0] - Lx/2.0
+    yc = x[1] - Ly/2.0
+    r = np.sqrt(xc**2 + yc**2)
+    theta = np.arctan2(yc, xc)
+    R = R0 * (1.0 + epsR * np.cos(m * (theta - theta0)))
+    return np.where(r < R, 1.0, -1.0)
+
+
+
+
+'''
+def initial_phi(x):
+    r = np.sqrt((x[0] - Lx/2)**2 + (x[1] - Ly/2)**2)
+    return np.where(r < 25, 1.0, -1.0)
+'''
 
 def initial_u(x):
     return -0.75*np.ones(x.shape[1], dtype=default_real_type)
@@ -60,102 +72,96 @@ com.sub(0).interpolate(initial_phi)
 com_0.sub(0).interpolate(initial_phi)
 com.sub(1).interpolate(initial_u)
 com_0.sub(1).interpolate(initial_u)
-com.x.scatter_forward(); com_0.x.scatter_forward()
-
-# tiny symmetry-breaking perturbation to φ in the interface band
-P0_phi, dof_phi = ME.sub(0).collapse()
-phi_vals = com.x.array[dof_phi].copy()
-mask = np.abs(phi_vals) < 0.9
-phi_vals[mask] += 1e-3 * (rng.random(np.count_nonzero(mask)) - 0.5)
-com.x.array[dof_phi] = phi_vals
 com.x.scatter_forward()
+com_0.x.scatter_forward()
 
-# ---------------- Free-energy derivative ∂f/∂φ ----------------
+phi_vec = com.sub(0).x.array
+mask = np.clip(1.0 - phi_vec**2, 0.0, 1.0)
+phi_vec += (5e-4) * mask * rng.standard_normal(phi_vec.shape)  # smaller amp and masked
+np.clip(phi_vec, -1.0, 1.0, out=phi_vec)                       # keep in [-1,1]
+com.sub(0).x.array[:] = phi_vec
+com.x.scatter_forward()
+com_0.x.array[:] = com.x.array
+com_0.x.scatter_forward()
+
+# Free-energy derivative
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
-# ---------------- Anisotropy via angle a(θ)=1+ε cos(mθ) --------
-eps_an = fem.Constant(msh, default_real_type(0.1))
-eta    = fem.Constant(msh, default_real_type(1e-6))
+# ----------------- ANISOTROPY -----------------
+eps_an = fem.Constant(msh, default_real_type(0.05))
+eta    = fem.Constant(msh, default_real_type(1e-8))
 K =  fem.Constant(msh, default_real_type(0.5))
-m =  fem.Constant(msh, default_real_type(4))# reuse your 'm' variable: set m = 4 or 6 above
-
-theta_c = 0.0           # rotate arms by this angle
 
 gphi = grad(phi)
 g2   = inner(gphi, gphi)
 ng   = sqrt(g2 + eta**2)
 nHat = gphi / ng
-nx, ny = nHat[0]+ eta, nHat[1] + eta  # avoid exact zeros
 
 d = msh.geometry.dim
 I = Identity(d)
 P = I - outer(nHat, nHat)
 
-# Angle and anisotropy (general m)
-theta   = ufl.atan2(ny, nx)                      # only used to evaluate a
-a       = 1.0 + eps_an * ufl.cos(m * (theta - theta_c))
-da_dn = -eps_an * m * ufl.sin(m * (theta - theta_c)) * as_vector((-ny, nx))
 
-# Chain rule to ∂a/∂(∇φ): da/dg = (∂n/∂g)^T·(da/dn) = (P/|∇φ|_η)·da_dn
+a     = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nHat[0]**4 + nHat[1]**4)
+da_dn = as_vector((16.0*eps_an*nHat[0]**3, 16.0*eps_an*nHat[1]**3))
+
 da_dg = dot(P, da_dn) / ng
-
-# Gradient contribution and kinetic prefactor
 q_phi = lamda_0**2 * (a**2 * gphi + g2 * a * da_dg)
 F_grad_aniso = inner(q_phi, grad(w_phi)) * dx
 tau = tau_0 * a**2
+# ----------------------------------------------
 
-
-# ---------------- Weak forms (using τ(n)) -----------------------
+# Weak forms
 R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*df*w_phi*dx
      + dt*F_grad_aniso )
 
 R1 = ( (u - u_0)*w_u*dx
-     - 0.5*(phi - phi_0)*w_u*dx
+     - K*(phi - phi_0)*w_u*dx
      + dt*D*inner(grad(u), grad(w_u))*dx )
 
 R = R0 + R1
-
-# Natural Neumann BCs (paper case): no Dirichlet BCs
-bcs = []
-
-# Jacobian & solver
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
-problem = NonlinearProblem(R, com, bcs=bcs, J=J)
 
+# Solver---lu 
+problem = NonlinearProblem(R, com, bcs=[], J=J)
 solver = NewtonSolver(msh.comm, problem)
 solver.convergence_criterion = "incremental"
-solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
-solver.atol = 1e-12
+solver.rtol = 1e-8
+solver.atol = 1e-10
 solver.max_it = 100
 solver.report = True
 
 ksp = solver.krylov_solver
 opt = PETSc.Options()
 opt_prefix = ksp.getOptionsPrefix()
+
 opt[f"{opt_prefix}ksp_type"] = "preonly"
-opt[f"{opt_prefix}pc_type"]  = "lu"
-opt[f"{opt_prefix}snes_monitor"] = ""
+opt[f"{opt_prefix}pc_type"] = "lu"
+
 sys = PETSc.Sys()
 if sys.hasExternalPackage("superlu_dist"):
     opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "superlu_dist"
 elif sys.hasExternalPackage("mumps"):
     opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
+
+print("\n>>> Using Direct LU solver (SuperLU / MUMPS)\n")
 ksp.setFromOptions()
 
-
-file = XDMFFile(MPI.COMM_WORLD, "output_task_3_angle.xdmf", "w")
+# ---------------- Output dir ----------------
+file = XDMFFile(MPI.COMM_WORLD, "output_task_3_1.xdmf", "w")
 file.write_mesh(msh)
-
 
 # Time
 t = 0.0
-T = 300.0
+T = 500
 step = 0
 # Initial output fields (t=0)
-phi_sub = com.sub(0)
+phi_sub = com.sub(0); phi_sub.name = "phi"
+u_sub   = com.sub(1); u_sub.name   = "u"
 file.write_function(phi_sub, 0.0)
+file.write_function(u_sub, 0.0)
 
 
 while t < T:
@@ -169,6 +175,7 @@ while t < T:
     com.x.scatter_forward()
     if step % STRIDE == 0:
         file.write_function(phi_sub, t)
+        file.write_function(u_sub, t)
         
 
 if msh.comm.rank == 0:

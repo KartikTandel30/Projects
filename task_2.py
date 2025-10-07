@@ -86,7 +86,7 @@ diag = CoupledDiagnostics(msh, phi, u, lamda_0, zet, tau=tau_0, D=D)
 diag.start(print_fn=PETSc.Sys.Print)
 
 # Solving the nonlinear problem 
-problem = NonlinearProblem(R, com,bcs=[], J=J)
+problem = NonlinearProblem(R, com ,bcs=[], J=J)
 solver = NewtonSolver(msh.comm, problem)
 solver.convergence_criterion = "incremental"
 solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
@@ -114,15 +114,7 @@ t = 0.0
 T = 20
 
 P0, dof = ME.sub(0).collapse()
-# Visualize using PyVista
-topology, cell_types, x = plot.vtk_mesh(P0)
-grid = pv.UnstructuredGrid(topology, cell_types, x)
-grid.point_data["Phase"] = com.x.array[dof].real
-grid.set_active_scalars("Phase")
-plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=False)
-plotter.view_xy(True)
-plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
+
 
 # Time loop
 while t < T:

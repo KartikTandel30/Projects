@@ -17,13 +17,13 @@ import time
 
 t_start = time.time()
 # ---------------- Parameters ----------------
-zet = 1.6
+zet = 1.9
 tau_0 = 1
 lamda_0 = 1
 dt = 0.04
-D = 1
+D = 1.5
 
-
+STRIDE = 10  # save every STRIDE time steps
 # Mesh
 Lx, Ly = 250, 250
 Nx, Ny = 250,250
@@ -40,7 +40,7 @@ phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
 m = 4             # set to your anisotropy (2,4,6,...)
-R0 = 48.0         # base radius (your seed)
+R0 = 5         # base radius (your seed)
 epsR = 0.02       # 1–3% wobble
 theta0 = 0.0      # rotation; use np.pi/4 for 45°
 
@@ -73,8 +73,9 @@ com_0.x.scatter_forward()
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
 # ----------------- ANISOTROPY -----------------
-eps_an = fem.Constant(msh, default_real_type(0.1))
+eps_an = fem.Constant(msh, default_real_type(0.075))
 eta    = fem.Constant(msh, default_real_type(1e-8))
+K =  fem.Constant(msh, default_real_type(0.75))
 
 gphi = grad(phi)
 g2   = inner(gphi, gphi)
@@ -85,6 +86,11 @@ d = msh.geometry.dim
 I = Identity(d)
 P = I - outer(nHat, nHat)
 
+theta0 = np.pi/4  # example: rotate easy directions by 45°
+c0, s0 = np.cos(theta0), np.sin(theta0)
+nxp = c0*nHat[0] + s0*nHat[1]
+nyp = -s0*nHat[0] + c0*nHat[1]
+a = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nxp**4 + nyp**4)
 
 a     = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nHat[0]**4 + nHat[1]**4)
 da_dn = as_vector((16.0*eps_an*nHat[0]**3, 16.0*eps_an*nHat[1]**3))
@@ -101,41 +107,44 @@ R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*F_grad_aniso )
 
 R1 = ( (u - u_0)*w_u*dx
-     - 0.5*(phi - phi_0)*w_u*dx
+     - K*(phi - phi_0)*w_u*dx
      + dt*D*inner(grad(u), grad(w_u))*dx )
 
 R = R0 + R1
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
 
-# Solver
-problem = NonlinearProblem(R, com, bcs=[] J=J)
+# Solver--- gmres + hypre
+
+problem = NonlinearProblem(R, com, bcs=[], J=J)
 solver = NewtonSolver(msh.comm, problem)
-solver.convergence_criterion = "residual"
-solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
-solver.atol = 1e-12
-solver.max_it = 25
+solver.convergence_criterion = "incremental"
+solver.relaxation_parameter = 0.8
+solver.rtol = 1e-8
+solver.atol = 1e-10
+solver.max_it = 50
 solver.report = True
 
 ksp = solver.krylov_solver
 opt = PETSc.Options()
 opt_prefix = ksp.getOptionsPrefix()
-opt[f"{opt_prefix}ksp_type"] = "preonly"
-opt[f"{opt_prefix}pc_type"] = "lu"
-sys = PETSc.Sys()
-if sys.hasExternalPackage("superlu_dist"):
-    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "superlu_dist"
-elif sys.hasExternalPackage("mumps"):
-    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
+
+opt[f"{opt_prefix}ksp_type"] = "gmres"
+opt[f"{opt_prefix}pc_type"] = "hypre"
+opt[f"{opt_prefix}ksp_rtol"] = 1e-8
+opt[f"{opt_prefix}ksp_max_it"] = 500
+
+print("\n>>> Using Iterative GMRES + HYPRE solver (fast)\n")
 ksp.setFromOptions()
 
 # ---------------- Output dir ----------------
-file = XDMFFile(MPI.COMM_WORLD, "output_task_3.xdmf", "w")
+file = XDMFFile(MPI.COMM_WORLD, "output_task_3_2.xdmf", "w")
 file.write_mesh(msh)
+
 
 # Time
 t = 0.0
-T = 500.0
+T = 600.0
 step = 0
 # Initial output fields (t=0)
 phi_sub = com.sub(0)
