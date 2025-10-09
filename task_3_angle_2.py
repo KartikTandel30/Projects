@@ -8,7 +8,7 @@ from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
 from dolfinx.io import XDMFFile
-from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot, atan_2
+from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot, atan2
 
 # -------------------- run parameters (stable defaults) --------------------
 # KR98-like discretization on your 250x250 grid
@@ -91,7 +91,7 @@ n     = as_vector((nHat[0]/normn, nHat[1]/normn))
 I     = Identity(msh.geometry.dim)
 P     = I - outer(n, n)
 
-theta = atan_2(n[1], n[0])
+theta = atan2(n[1], n[0])
 a     = 1.0 + eps_an * ufl.cos(mC * (theta - theta_c))
 
 # da/d(∇φ) = (P/|∇φ|_η) · da/dn  with  dθ/dn = (-ny, nx)
