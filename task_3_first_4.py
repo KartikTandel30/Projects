@@ -14,6 +14,8 @@ import random
 from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot
 import numpy as np
 import time
+from numpy.random import default_rng  # ADD THIS
+rng = default_rng(12345) 
 
 t_start = time.time()
 # ---------------- Parameters ----------------
@@ -21,7 +23,7 @@ zet = 1.6
 tau_0 = 1
 lamda_0 = 1
 dt = 0.04
-D = 1
+D = 1.5
 STRIDE = 10  # save every STRIDE time steps
 # Mesh
 Lx, Ly = 250, 250
@@ -38,18 +40,14 @@ com_0 = Function(ME)
 phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
-m = 4             # set to your anisotropy (2,4,6,...)
-R0 = 5         # base radius (your seed)
-epsR = 0.02       # 1–3% wobble
-theta0 = 0.0      # rotation; use np.pi/4 for 45°
+R0 = 5.0
+w_eq = np.sqrt(2.0) * lamda_0 
 
 def initial_phi(x):
     xc = x[0] - Lx/2.0
     yc = x[1] - Ly/2.0
-    r = np.sqrt(xc**2 + yc**2)
-    theta = np.arctan2(yc, xc)
-    R = R0 * (1.0 + epsR * np.cos(m * (theta - theta0)))
-    return np.where(r < R, 1.0, -1.0)
+    r  = np.sqrt(xc**2 + yc**2)
+    return np.tanh((R0 - r) / w_eq)
 
 '''
 def initial_phi(x):
@@ -68,13 +66,22 @@ com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
 
+phi_vec = com.sub(0).x.array
+mask = np.clip(1.0 - phi_vec**2, 0.0, 1.0)
+phi_vec += (5e-4) * mask * rng.standard_normal(phi_vec.shape)  # smaller amp and masked
+np.clip(phi_vec, -1.0, 1.0, out=phi_vec)                       # keep in [-1,1]
+com.sub(0).x.array[:] = phi_vec
+com.x.scatter_forward()
+com_0.x.array[:] = com.x.array
+com_0.x.scatter_forward()
+
 # Free-energy derivative
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
 # ----------------- ANISOTROPY -----------------
-eps_an = fem.Constant(msh, default_real_type(0.12))
+eps_an = fem.Constant(msh, default_real_type(0.08))
 eta    = fem.Constant(msh, default_real_type(1e-8))
-K =  fem.Constant(msh, default_real_type(1.2))
+K =  fem.Constant(msh, default_real_type(1.0))
 
 gphi = grad(phi)
 g2   = inner(gphi, gphi)
@@ -139,20 +146,20 @@ file.write_mesh(msh)
 
 # Time
 t = 0.0
-T = 800.0
+T = 500.0
 step = 0
 # Initial output fields (t=0)
 phi_sub = com.sub(0)
 phi_sub.name = "phi"
 file.write_function(phi_sub, 0.0)
 
-
+print("Starting time-simulation...")
 while t < T:
     t += dt
     step += 1
 
     its, converged = solver.solve(com)
-    print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
+    #print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
 
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()

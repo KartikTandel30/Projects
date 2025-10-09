@@ -28,7 +28,7 @@ lamda_0 = 1.0    # λ0
        # Δt
 D = 1.0          # thermal diffusivity
 t = 0.0
-T = 300.0
+T = 500.0
 step = 0
 dt0 = 0.02
 
@@ -55,7 +55,7 @@ phi_0, u_0 = ufl.split(com_0)
 
 # ---------------- Initial conditions ----------------
 def initial_phi(x):
-    r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)
+    r = np.sqrt((x[0] - Lx/2)**2 + (x[1] - Ly/2)**2)
     return np.where(r < 5.0, 1.0, -1.0)
 
 def initial_u(x):
@@ -80,10 +80,10 @@ com.x.scatter_forward()
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
 # ---------------- Anisotropy via angle a(θ)=1+ε cos(mθ) --------
-eps_an = fem.Constant(msh, default_real_type(0.1))
+eps_an = fem.Constant(msh, default_real_type(0.05))
 eta    = fem.Constant(msh, default_real_type(1e-6))
 K =  fem.Constant(msh, default_real_type(0.5))
-m =  fem.Constant(msh, default_real_type(4))# reuse your 'm' variable: set m = 4 or 6 above
+m =  fem.Constant(msh, default_real_type(6))# reuse your 'm' variable: set m = 4 or 6 above
 dt  = fem.Constant(msh, default_real_type(dt0))
 theta_c = 0.0           # rotate arms by this angle
 
@@ -134,7 +134,7 @@ solver = NewtonSolver(msh.comm, problem)
 solver.convergence_criterion = "incremental"
 solver.rtol = np.sqrt(np.finfo(default_real_type).eps) * 1e-6
 solver.atol = 1e-12
-solver.max_it = 100
+solver.max_it = 200
 solver.report = True
 
 ksp = solver.krylov_solver
@@ -172,42 +172,41 @@ its_ok      = 4
 success_streak = 0
 
 while t < T:
-    # try this time level, halving dt on failure (retry from last good state)
     retries = 0
     while True:
-        its, converged = solver.solve(com)
-        if converged:
-            break
-
-        # failure → shrink dt and retry from last good
-        new_dt = 0.5 * float(dt.value)
-        if new_dt < dt_min:
-            # write last good and exit cleanly
-            t_good = t
+        try:
+            its, converged = solver.solve(com)
+            if not converged:
+                raise RuntimeError("Newton not converged")
+            break  # success
+        except Exception as e:
+            new_dt = 0.5 * float(dt.value)
+            if new_dt < dt_min:
+                # write last good and exit cleanly
+                t_good = t
+                if msh.comm.rank == 0:
+                    print(f"[FAIL] {e}. dt<{dt_min}. Writing last good frame t={t_good:.4g} and exiting.")
+                save_frame(t_good)
+                raise
             if msh.comm.rank == 0:
-                print(f"[FAIL] dt<{dt_min}. Writing last good frame at t={t_good:.4g} and exiting.")
-            save_frame(t_good)
-            raise RuntimeError("Newton failed and dt_min reached.")
+                print(f"[retry] Newton failed → dt {float(dt.value):.4g} → {new_dt:.4g}")
+            dt.value = new_dt
+            # revert to last good state
+            com.x.array[:] = com_0.x.array
+            com.x.scatter_forward()
+            success_streak = 0
+            retries += 1
 
-        if msh.comm.rank == 0:
-            print(f"[retry] Newton failed → dt {float(dt.value):.4g} → {new_dt:.4g}")
-        dt.value = new_dt
-        com.x.array[:] = com_0.x.array
-        com.x.scatter_forward()
-        success_streak = 0
-        retries += 1
-
-    # success → advance time/state
+    # success → advance time and state
     t += float(dt.value)
     step += 1
     if msh.comm.rank == 0:
         print(f"Step {step}: Newton iterations = {its} (OK)  dt={float(dt.value):.4g}")
 
-    # update reference state
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
 
-    # grow dt back if solves are easy
+    # grow dt back when solves are easy
     if its <= its_ok:
         success_streak += 1
     else:
@@ -220,9 +219,9 @@ while t < T:
         if msh.comm.rank == 0:
             print(f"[grow] dt {old:.4g} → {float(dt.value):.4g}")
 
-    # save periodically
     if step % STRIDE == 0:
         save_frame(t)
+
 
 if msh.comm.rank == 0:
     print("Open in ParaView → output_task_3_angle.xdmf → Apply → time slider.")

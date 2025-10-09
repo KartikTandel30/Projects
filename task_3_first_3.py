@@ -20,7 +20,7 @@ rng = default_rng(12345)
 t_start = time.time()
 # ---------------- Parameters ----------------
 zet = 1.6
-tau_0 = 1
+tau_0 = 0.8
 lamda_0 = 1
 dt = 0.04
 D = 1
@@ -40,23 +40,14 @@ com_0 = Function(ME)
 phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
-'''
-m = 4             # set to your anisotropy (2,4,6,...)
-R0 = 5        # base radius (your seed)
-epsR = 0.02       # 1–3% wobble
-theta0 = 0.0      # rotation; use np.pi/4 for 45°
+R0 = 5.0
+w_eq = np.sqrt(2.0) * lamda_0 
 
 def initial_phi(x):
     xc = x[0] - Lx/2.0
     yc = x[1] - Ly/2.0
-    r = np.sqrt(xc**2 + yc**2)
-    theta = np.arctan2(yc, xc)
-    R = R0 * (1.0 + epsR * np.cos(m * (theta - theta0)))
-    return np.where(r < R, 1.0, -1.0)
-'''
-def initial_phi(x):
-    r = np.sqrt((x[0] - Lx/2)**2 + (x[1] - Ly/2)**2)
-    return np.where(r < 5, 1.0, -1.0)
+    r  = np.sqrt(xc**2 + yc**2)
+    return np.tanh((R0 - r) / w_eq)
 
 
 def initial_u(x):
@@ -70,6 +61,7 @@ com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
 
+'''
 phi_vec = com.sub(0).x.array
 mask = np.clip(1.0 - phi_vec**2, 0.0, 1.0)
 phi_vec += (5e-4) * mask * rng.standard_normal(phi_vec.shape)  # smaller amp and masked
@@ -78,14 +70,14 @@ com.sub(0).x.array[:] = phi_vec
 com.x.scatter_forward()
 com_0.x.array[:] = com.x.array
 com_0.x.scatter_forward()
-
+'''
 # Free-energy derivative
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
 # ----------------- ANISOTROPY -----------------
 eps_an = fem.Constant(msh, default_real_type(0.1))
 eta    = fem.Constant(msh, default_real_type(1e-8))
-K =  fem.Constant(msh, default_real_type(0.5))
+K =  fem.Constant(msh, default_real_type(1.0))
 
 gphi = grad(phi)
 g2   = inner(gphi, gphi)
@@ -119,62 +111,30 @@ R = R0 + R1
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
 
-# --------- Solver — Field-split Schur (φ|u) with explicit index sets ---------
+# Solver---lu 
 problem = NonlinearProblem(R, com, bcs=[], J=J)
 solver = NewtonSolver(msh.comm, problem)
-
-# You asked for "incremental" — add safe fallback to "residual" (0.9.0 only)
-try:
-    solver.convergence_criterion = "incremental"
-except Exception:
-    solver.convergence_criterion = "residual"
-
+solver.convergence_criterion = "incremental"
 solver.rtol = 1e-8
 solver.atol = 1e-10
-solver.max_it = 200
+solver.max_it = 100
 solver.report = True
 
 ksp = solver.krylov_solver
-pc  = ksp.getPC()
-
-# --- Build PETSc index sets for each subspace (needed in dolfinx 0.9.0) ---
-Vphi, map_phi = ME.sub(0).collapse()
-Vu,   map_u   = ME.sub(1).collapse()
-is_phi = PETSc.IS().createGeneral(np.asarray(map_phi, dtype=np.int32))
-is_u   = PETSc.IS().createGeneral(np.asarray(map_u,   dtype=np.int32))
-
-# Tell PETSc how to split the mixed system
-pc.setType(PETSc.PC.Type.FIELDSPLIT)
-pc.setFieldSplitIS(("phi", is_phi), ("u", is_u))
-
-# PETSc options
 opt = PETSc.Options()
 opt_prefix = ksp.getOptionsPrefix()
 
-# Outer Krylov
-opt[f"{opt_prefix}ksp_type"]    = "gmres"
-opt[f"{opt_prefix}ksp_rtol"]    = 1e-8
-opt[f"{opt_prefix}ksp_max_it"]  = 200
+opt[f"{opt_prefix}ksp_type"] = "preonly"
+opt[f"{opt_prefix}pc_type"] = "lu"
 
-# Schur complement preconditioner
-opt[f"{opt_prefix}pc_fieldsplit_type"]           = "schur"
-opt[f"{opt_prefix}pc_fieldsplit_schur_fact_type"] = "lower"
+sys = PETSc.Sys()
+if sys.hasExternalPackage("superlu_dist"):
+    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "superlu_dist"
+elif sys.hasExternalPackage("mumps"):
+    opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
 
-# Block solvers:
-#   φ-block (stiff interface operator): LU
-opt[f"{opt_prefix}fieldsplit_phi_ksp_type"] = "preonly"
-opt[f"{opt_prefix}fieldsplit_phi_pc_type"]  = "lu"
-
-#   u-block (diffusion): AMG (hypre)
-opt[f"{opt_prefix}fieldsplit_u_ksp_type"] = "preonly"
-opt[f"{opt_prefix}fieldsplit_u_pc_type"]  = "hypre"
-
-# Ensure matrix type compatible with AMG
-opt[f"{opt_prefix}mat_type"] = "aij"
-
-print("\n>>> Using Field-split Schur preconditioner (phi: LU, u: HYPRE)\n")
+print("\n>>> Using Direct LU solver (SuperLU / MUMPS)\n")
 ksp.setFromOptions()
-
 
 # ---------------- Output dir ----------------
 file = XDMFFile(MPI.COMM_WORLD, "output_task_3_3.xdmf", "w")
@@ -188,13 +148,13 @@ step = 0
 phi_sub = com.sub(0)
 file.write_function(phi_sub, 0.0)
 
-
+print ("start of simulation")
 while t < T:
     t += dt
     step += 1
 
     its, converged = solver.solve(com)
-    print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
+    #print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
 
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()

@@ -22,13 +22,13 @@ t_start = time.time()
 zet = 1.6
 tau_0 = 1
 lamda_0 = 1
-dt = 0.01
+dt = 0.04
 D = 1
 
-STRIDE = 20  # save every STRIDE time steps
+STRIDE = 10  # save every STRIDE time steps
 # Mesh
-Lx, Ly = 250, 250
-Nx, Ny = 250,250
+Lx, Ly = 300, 300
+Nx, Ny = 300,300
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
@@ -42,21 +42,14 @@ phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
 
-m = 4             # set to your anisotropy (2,4,6,...)
-R0 = 5        # base radius (your seed)
-epsR = 0.02       # 1–3% wobble
-theta0 = 0.0      # rotation; use np.pi/4 for 45°
+R0 = 5.0
+w_eq = np.sqrt(2.0) * lamda_0 
 
 def initial_phi(x):
     xc = x[0] - Lx/2.0
     yc = x[1] - Ly/2.0
-    r = np.sqrt(xc**2 + yc**2)
-    theta = np.arctan2(yc, xc)
-    R = R0 * (1.0 + epsR * np.cos(m * (theta - theta0)))
-    return np.where(r < R, 1.0, -1.0)
-
-
-
+    r  = np.sqrt(xc**2 + yc**2)
+    return np.tanh((R0 - r) / w_eq)
 
 '''
 def initial_phi(x):
@@ -75,6 +68,7 @@ com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
 
+'''
 phi_vec = com.sub(0).x.array
 mask = np.clip(1.0 - phi_vec**2, 0.0, 1.0)
 phi_vec += (5e-4) * mask * rng.standard_normal(phi_vec.shape)  # smaller amp and masked
@@ -83,7 +77,7 @@ com.sub(0).x.array[:] = phi_vec
 com.x.scatter_forward()
 com_0.x.array[:] = com.x.array
 com_0.x.scatter_forward()
-
+'''
 # Free-energy derivative
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
@@ -159,23 +153,22 @@ T = 500
 step = 0
 # Initial output fields (t=0)
 phi_sub = com.sub(0); phi_sub.name = "phi"
-u_sub   = com.sub(1); u_sub.name   = "u"
 file.write_function(phi_sub, 0.0)
-file.write_function(u_sub, 0.0)
 
+print("Starting time-simulation...")
 
 while t < T:
     t += dt
     step += 1
 
     its, converged = solver.solve(com)
-    print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
+    #print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
 
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
     if step % STRIDE == 0:
         file.write_function(phi_sub, t)
-        file.write_function(u_sub, t)
+        
         
 
 if msh.comm.rank == 0:

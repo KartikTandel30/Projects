@@ -39,19 +39,14 @@ com_0 = Function(ME)
 phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
-m = 4             # set to your anisotropy (2,4,6,...)
-R0 = 5         # base radius (your seed)
-epsR = 0.02       # 1–3% wobble
-theta0 = 0.0      # rotation; use np.pi/4 for 45°
+R0 = 5.0
+w_eq = np.sqrt(2.0) * lamda_0 
 
 def initial_phi(x):
     xc = x[0] - Lx/2.0
     yc = x[1] - Ly/2.0
-    r = np.sqrt(xc**2 + yc**2)
-    theta = np.arctan2(yc, xc)
-    R = R0 * (1.0 + epsR * np.cos(m * (theta - theta0)))
-    return np.where(r < R, 1.0, -1.0)
-
+    r  = np.sqrt(xc**2 + yc**2)
+    return np.tanh((R0 - r) / w_eq)
 '''
 def initial_phi(x):
     r = np.sqrt((x[0] - Lx/2)**2 + (x[1] - Ly/2)**2)
@@ -68,6 +63,17 @@ com.sub(1).interpolate(initial_u)
 com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
+
+'''
+phi_vec = com.sub(0).x.array
+mask = np.clip(1.0 - phi_vec**2, 0.0, 1.0)
+phi_vec += (5e-4) * mask * rng.standard_normal(phi_vec.shape)  # smaller amp and masked
+np.clip(phi_vec, -1.0, 1.0, out=phi_vec)                       # keep in [-1,1]
+com.sub(0).x.array[:] = phi_vec
+com.x.scatter_forward()
+com_0.x.array[:] = com.x.array
+com_0.x.scatter_forward()
+'''
 
 # Free-energy derivative
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
@@ -86,11 +92,6 @@ d = msh.geometry.dim
 I = Identity(d)
 P = I - outer(nHat, nHat)
 
-theta0 = np.pi/4  # example: rotate easy directions by 45°
-c0, s0 = np.cos(theta0), np.sin(theta0)
-nxp = c0*nHat[0] + s0*nHat[1]
-nyp = -s0*nHat[0] + c0*nHat[1]
-a = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nxp**4 + nyp**4)
 
 a     = (1.0 - 3.0*eps_an) + 4.0*eps_an*(nHat[0]**4 + nHat[1]**4)
 da_dn = as_vector((16.0*eps_an*nHat[0]**3, 16.0*eps_an*nHat[1]**3))
@@ -100,7 +101,6 @@ q_phi = lamda_0**2 * (a**2 * gphi + g2 * a * da_dg)
 F_grad_aniso = inner(q_phi, grad(w_phi)) * dx
 tau = tau_0 * a**2
 # ----------------------------------------------
-
 # Weak forms
 R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*df*w_phi*dx
@@ -113,7 +113,6 @@ R1 = ( (u - u_0)*w_u*dx
 R = R0 + R1
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
-
 # Solver--- gmres + hypre
 
 problem = NonlinearProblem(R, com, bcs=[], J=J)
@@ -150,13 +149,13 @@ step = 0
 phi_sub = com.sub(0)
 file.write_function(phi_sub, 0.0)
 
-
+print("Starting time-simulation...")
 while t < T:
     t += dt
     step += 1
 
     its, converged = solver.solve(com)
-    print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
+    #print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
 
     com_0.x.array[:] = com.x.array
     com.x.scatter_forward()
