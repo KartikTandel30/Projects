@@ -16,7 +16,7 @@ import pyvista as pv
 import pyvistaqt as pvq
 import numpy as np
 import time
-from test2 import CoupledDiagnostics
+from task_2.test2 import CoupledDiagnostics
 from test_bc import bc_check   
 
 # Parameter constants used, taken from the ref. paper

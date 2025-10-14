@@ -153,7 +153,7 @@ actor = plotter.add_mesh(
     clim=[-1, 1], cmap="coolwarm",
     show_edges=False, smooth_shading=True
 )
-plotter.show_grid(False)
+plotter.show_grid(True)
 time_txt = plotter.add_text("time: 0.00", font_size=10)
 plotter.view_xy(True)
 plotter.render()

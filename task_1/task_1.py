@@ -16,7 +16,11 @@ import pyvista as pv
 import pyvistaqt as pvq
 import numpy as np
 import time
+from dolfinx.io import XDMFFile
+import pathlib
+from ufl import SpatialCoordinate, conditional, lt, gt, as_ufl
 
+t_start = time.time()
 # Parameter constants used, taken from the ref. paper
 zet = 1.6   # coupling constant
 u = -0.75   # Temparature
@@ -37,18 +41,21 @@ w_phi = ufl.TestFunction(ME)  # test function for order parameter
 phi = Function(ME)  # trial function n+1
 phi_0 = Function(ME)  # previous value
 
+
 '''
-def initial_phi(x):
-    r = np.sqrt((x[0] - 250.0)**2 + (x[1] - 250.0)**2)  # Center at (250, 250)
-    return np.where(r < 25.0, 1.0, -1.0)
+R0 = 5.0
+w_eq = np.sqrt(2.0) * lamda_0 
 
 def initial_phi(x):
-    return -1* np.ones(x.shape[1], dtype=default_real_type)
+    xc = x[0] - Lx/2.0
+    yc = x[1] - Ly/2.0
+    r  = np.sqrt(xc**2 + yc**2)
+    return np.tanh((R0 - r) / w_eq)
 '''
+w0= 1 
 def initial_phi(x):
-    left = x[0] < 0.5*Lx
-    return np.where(left, 1.0, -1.0)
-   
+    phi0_expr = conditional(lt(x[1], w0), 1.0, -1.0)
+    return phi0_expr
 
 phi.interpolate(initial_phi)
 phi_0.interpolate(initial_phi)
@@ -89,40 +96,37 @@ elif sys.hasExternalPackage("mumps"):
     opt[f"{opt_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
 
+
+results_dir = pathlib.Path("phase_output_T1")
+results_dir.mkdir(parents=True, exist_ok=True)
+
+# Open once, write mesh once, then write functions per time step
+xdmf_path = results_dir / "phi.xdmf"
+xdmf = XDMFFile(msh.comm, str(xdmf_path), "w")
+xdmf.write_mesh(ME.mesh)
+
 t = 0.0
-T = 20
+T = 200 
 
-# Visualize using PyVista
-topology, cell_types, x = plot.vtk_mesh(ME)
-grid = pv.UnstructuredGrid(topology, cell_types, x)
-grid.point_data["Phase"] = phi.x.array.real
-grid.set_active_scalars("Phase")
-plotter = pvq.BackgroundPlotter(title="Phase", auto_update=True)
-plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
-plotter.view_xy(True)
-plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 
-# Time loop
 while t < T:
     t += dt
-    res = solver.solve(phi)
-    print(f"Step {int(t/dt)}: num iteration: {res[0]}")
+
+    its, converged = solver.solve(phi)
+    #print(f"Step {step}: Newton iterations = {its} ({'OK' if converged else 'NOT CONV'})")
+
     phi_0.x.array[:] = phi.x.array
     phi.x.scatter_forward()
-    print(f"min(phi): {phi.x.array.min():.4f}, max(phi): {phi.x.array.max():.4f}")
-    grid.point_data["Phase"] = phi.x.array.real
-    plotter.remove_actor("timelabel")
-    plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
-    plotter.app.processEvents()
-
-phi.x.scatter_forward()
-grid.point_data["Phase"] = phi.x.array.real
-screenshot = None
-if pv.OFF_SCREEN:
-    screenshot = "phase.png"
-pv.plot(grid, show_edges=True, screenshot=screenshot)
+    xdmf.write_function(phi, t)
+    phi_vals_all = phi.x.array[:]
+    if (np.allclose(phi_vals_all,  1.0, atol=1e-3) or np.allclose(phi_vals_all, -1.0, atol=1e-3)):
+        print("Domain fully saturated at ±1. Ending early.")
+        break
 
 
-print("Simulation complete. Close the window to exit.")
-while plotter.app.running:
-    time.sleep(0.1)
+xdmf.close()  
+if msh.comm.rank == 0:
+    print("Open in ParaView. File -> Open -> output_task_1.xdmf")
+if msh.comm.rank == 0:
+    print(f"Total runtime: {time.time()-t_start:.2f}s")
+    

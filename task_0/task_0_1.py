@@ -17,13 +17,16 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from openpyxl import Workbook
+import pathlib
+from dolfinx.io import XDMFFile
 
+t_start = time.time()
 # Parameters
 zet = 1.6
 u = -0.75
 tau_0 = 1
 lamda_0 = 1
-dt = 0.04
+dt = 0.01
 
 # Create mesh
 msh = create_rectangle(MPI.COMM_WORLD,
@@ -91,6 +94,17 @@ for i in range(len(phi.x.array)):
     header.append(f"f_node_{i}")
 ws_all.append(header)
 
+# =============================
+# ParaView output (XDMF/HDF5)
+# =============================
+results_dir = pathlib.Path("phase_output")
+results_dir.mkdir(parents=True, exist_ok=True)
+
+# Open once, write mesh once, then write functions per time step
+xdmf_path = results_dir / "phi.xdmf"
+xdmf = XDMFFile(msh.comm, str(xdmf_path), "w")
+xdmf.write_mesh(ME.mesh)
+
 # PyVista plot setup
 t = 0.0
 T = 20
@@ -103,11 +117,12 @@ plotter.add_mesh(grid, clim=[-1, 1], cmap="coolwarm", show_edges=True)
 plotter.view_xy(True)
 plotter.add_text(f"time:{t}", font_size=10, name="timelabel")
 
+step = 0
 # Time loop with free energy plotting
 while t < T:
     t += dt
-    res = solver.solve(phi)
-    print(f"Step {int(t / dt)}: num iteration: {res[0]}")
+    it , res = solver.solve(phi)
+    print(f"Step {int(t / dt)}: num iteration: {it}")
     phi_0.x.array[:] = phi.x.array
     phi.x.scatter_forward()
 
@@ -117,6 +132,7 @@ while t < T:
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
     plotter.app.processEvents()
 
+    xdmf.write_function(phi, t)
     # Export data to Excel
     phi_vals_all = phi.x.array.real
     f_vals_all = (
@@ -129,6 +145,15 @@ while t < T:
         row_all.extend([phi_i, f_i])
     ws_all.append(row_all)
 
+    # Early stop if fully solid (within tolerance)
+    pmin = float(phi.x.array.min())
+    pmax = float(phi.x.array.max())
+    print(f"min(phi): {pmin:.4f}, max(phi): {pmax:.4f}")
+
+    if np.allclose(phi_vals_all, 1.0, atol=1e-3):
+        print("All nodes have reached solid phase. Ending early.")
+        break
+    
 # Final plot
 phi.x.scatter_forward()
 grid.point_data["Phase"] = phi.x.array.real
@@ -138,8 +163,10 @@ if pv.OFF_SCREEN:
 pv.plot(grid, show_edges=True, screenshot=screenshot)
 
 # Save Excel file
-wb_all.save("all_nodes_phi_fphi_data.xlsx")
-
+wb_all.save("phiAndBulkData.xlsx")
+xdmf.close()
+if msh.comm.rank == 0:
+    print(f"Total runtime: {time.time()-t_start:.2f}s")
 # Final f vs phi plot
 phi_vals_final = phi.x.array.real
 f_vals_final = (
@@ -159,3 +186,4 @@ plt.show()
 
 print("Simulation complete. Close the window to exit.")
 plotter.app.exec_()
+    

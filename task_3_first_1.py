@@ -7,7 +7,7 @@ from basix.ufl import element, mixed_element
 from dolfinx import default_real_type, fem, plot
 from dolfinx.fem import Function, functionspace
 from dolfinx.fem.petsc import NonlinearProblem
-from dolfinx.mesh import CellType, create_rectangle
+from dolfinx.mesh import CellType, create_rectangle, create_unit_square
 from dolfinx.nls.petsc import NewtonSolver
 from dolfinx.io import XDMFFile
 import random
@@ -22,16 +22,18 @@ t_start = time.time()
 zet = 1.6
 tau_0 = 1
 lamda_0 = 1
-dt = 0.04
+dt = 0.0001
 D = 1
 
 STRIDE = 10  # save every STRIDE time steps
 # Mesh
-Lx, Ly = 300, 300
+Lx, Ly = 1,1
 Nx, Ny = 300,300
+msh = create_unit_square(MPI.COMM_WORLD, 600, 600, CellType.triangle)
+'''
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
-
+'''
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, mixed_element([P1, P1]))
 
@@ -42,7 +44,7 @@ phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
 
-R0 = 5.0
+R0 = 0.016
 w_eq = np.sqrt(2.0) * lamda_0 
 
 def initial_phi(x):
@@ -170,7 +172,7 @@ while t < T:
         file.write_function(phi_sub, t)
         
         
-
+xdmf.close()
 if msh.comm.rank == 0:
     print("Open in ParaView. File -> Open -> output_task_3.xdmf")
 if msh.comm.rank == 0:

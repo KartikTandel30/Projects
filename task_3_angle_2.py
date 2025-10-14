@@ -82,7 +82,7 @@ df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 # -------------------- anisotropy a(θ)=1+ε cos[m(θ-θc)] --------------------
 gphi = grad(phi)
 g2   = inner(gphi, gphi)
-ng   = sqrt(g2 + eta**2)
+ng   = sqrt(g2 + eta)
 
 # Unit normal n and projector P
 nHat  = gphi / ng
