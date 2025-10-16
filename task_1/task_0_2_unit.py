@@ -17,20 +17,39 @@ import numpy as np
 import csv                                  # <<< CHG
 from pathlib import Path
 import time
+import csv
+import json
+import argparse
+import pathlib
+# Parameters
 
 
-# Defaults (used if CSV missing or a key absent)          # <<< CHG
-zet=1.6 
-u=-0.75 
-tau_0=1.0
-lamda_0=1.0               
-dt=0.04 
-T=60.0
-Lx=50.0
-Ly=50.0
-Nx=50
-Ny=50
-t=0.0
+# Minimal JSON loader: read 'parameter_to.json' located next to this script.
+param_file = pathlib.Path(__file__).resolve().parent / "parameter.json"
+if not param_file.exists():
+    raise RuntimeError(
+        f"Parameter file not found: {param_file}\nCreate a JSON file named 'parameter_to.json' next to this script with keys: dt, Lx, Ly, Nx, Ny, T, zet, u, tau_0, lamda_0"
+    )
+
+with param_file.open("r", encoding="utf-8") as fh:
+    params = json.load(fh)
+
+required = ["dt", "Lx", "Ly", "Nx", "Ny", "T", "zet", "u", "tau_0", "lamda_0"]
+missing = [k for k in required if k not in params]
+if missing:
+    raise RuntimeError(f"Missing parameter keys in {param_file}: {missing}")
+
+# assign parameters (minimal casting)
+dt = float(params["dt"]) 
+Lx = float(params["Lx"]) 
+Ly = float(params["Ly"]) 
+Nx = int(params["Nx"]) 
+Ny = int(params["Ny"]) 
+T = float(params["T"]) 
+zet = float(params["zet"]) 
+u = float(params["u"]) 
+tau_0 = float(params["tau_0"]) 
+lamda_0 = float(params["lamda_0"]) 
 # =========================
 #   HELPERS
 # =========================
@@ -177,7 +196,7 @@ def global_fraction_close(phi_arr, target=+1.0, tol=1e-3):          # <<< CHG
 # =========================
 xdmf = XDMFFile(msh.comm, "phase_grad.xdmf", "w")
 xdmf.write_mesh(msh)
-
+t = 0.0
 # =========================
 #   TIME LOOP
 # =========================

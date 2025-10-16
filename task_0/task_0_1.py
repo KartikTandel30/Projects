@@ -19,19 +19,44 @@ import matplotlib.pyplot as plt
 from openpyxl import Workbook
 import pathlib
 from dolfinx.io import XDMFFile
+import json
+import argparse
+import pathlib
+
 
 t_start = time.time()
-# Parameters
-zet = 1.6
-u = -0.75
-tau_0 = 1
-lamda_0 = 1
-dt = 0.01
 
+# Minimal JSON loader: read 'parameter_to.json' located next to this script.
+param_file = pathlib.Path(__file__).resolve().parent / "parameter.json"
+if not param_file.exists():
+    raise RuntimeError(
+        f"Parameter file not found: {param_file}\nCreate a JSON file named 'parameter_to.json' next to this script with keys: dt, Lx, Ly, Nx, Ny, T, zet, u, tau_0, lamda_0"
+    )
+
+with param_file.open("r", encoding="utf-8") as fh:
+    params = json.load(fh)
+
+required = ["dt", "Lx", "Ly", "Nx", "Ny", "T", "zet", "u", "tau_0", "lamda_0"]
+missing = [k for k in required if k not in params]
+if missing:
+    raise RuntimeError(f"Missing parameter keys in {param_file}: {missing}")
+
+# assign parameters (minimal casting)
+dt = float(params["dt"]) 
+Lx = float(params["Lx"]) 
+Ly = float(params["Ly"]) 
+Nx = int(params["Nx"]) 
+Ny = int(params["Ny"]) 
+T = float(params["T"]) 
+zet = float(params["zet"]) 
+u = float(params["u"]) 
+tau_0 = float(params["tau_0"]) 
+lamda_0 = float(params["lamda_0"]) 
 # Create mesh
+
 msh = create_rectangle(MPI.COMM_WORLD,
-                      [[0.0, 0.0], [100, 100]],
-                       [50, 50],
+                      [[0.0, 0.0], [Lx, Ly]],
+                       [Nx, Ny],
                        cell_type=CellType.triangle)
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, P1)
@@ -40,11 +65,7 @@ w_phi = ufl.TestFunction(ME)
 phi = Function(ME)
 phi_0 = Function(ME)
 
-'''
-def initial_phi(x):
-    r = np.sqrt((x[0] - 50.0)**2 + (x[1] - 50.0)**2)
-    return np.where(r < 5.0, -1.0, 1.0)
-'''
+
 def initial_phi(x):
     return -0.6* np.ones(x.shape[1], dtype=default_real_type)
 
@@ -107,7 +128,7 @@ xdmf.write_mesh(ME.mesh)
 
 # PyVista plot setup
 t = 0.0
-T = 20
+
 topology, cell_types, x = plot.vtk_mesh(ME)
 grid = pv.UnstructuredGrid(topology, cell_types, x)
 grid.point_data["Phase"] = phi.x.array.real
@@ -122,11 +143,11 @@ step = 0
 while t < T:
     t += dt
     it , res = solver.solve(phi)
-    print(f"Step {int(t / dt)}: num iteration: {it}")
+    #print(f"Step {int(t / dt)}: num iteration: {it}")
     phi_0.x.array[:] = phi.x.array
     phi.x.scatter_forward()
 
-    print(f"min(phi): {phi.x.array.min():.4f}, max(phi): {phi.x.array.max():.4f}")
+    #print(f"min(phi): {phi.x.array.min():.4f}, max(phi): {phi.x.array.max():.4f}")
     grid.point_data["Phase"] = phi.x.array.real
     plotter.remove_actor("timelabel")
     plotter.add_text(f"time: {t:.2e}", font_size=10, name="timelabel")
@@ -148,7 +169,7 @@ while t < T:
     # Early stop if fully solid (within tolerance)
     pmin = float(phi.x.array.min())
     pmax = float(phi.x.array.max())
-    print(f"min(phi): {pmin:.4f}, max(phi): {pmax:.4f}")
+    
 
     if np.allclose(phi_vals_all, 1.0, atol=1e-3):
         print("All nodes have reached solid phase. Ending early.")
@@ -186,4 +207,6 @@ plt.show()
 
 print("Simulation complete. Close the window to exit.")
 plotter.app.exec_()
-    
+
+# if file has header
+
