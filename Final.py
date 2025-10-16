@@ -2,9 +2,7 @@
 """
 Task 3 (phase-field + temperature), FEniCSx 0.9.0
 - Reads a CSV once (same folder by default) or falls back to built-in defaults.
-- Copies parameters into typed locals for clarity and validation.
-- Uses short two-word helper names.
-- Adds optional masked Gaussian noise to the initial phase field.
+
 """
 
 import csv
@@ -126,7 +124,7 @@ def functionSpaces(msh):
     return ME, P1
 
 
-def initial_phi_tanh_factory(Lx: float, Ly: float, R0: float, lamda_0: float):
+def initial_phi(Lx: float, Ly: float, R0: float, lamda_0: float):
     """
     Builds a tanh-profile initializer for phi: tanh((R0 - r)/w_eq), with w_eq = sqrt(2)*lamda_0.
 
@@ -146,7 +144,7 @@ def initial_phi_tanh_factory(Lx: float, Ly: float, R0: float, lamda_0: float):
     return _phi0
 
 
-def initial_u_constant_factory(u0: float):
+def initial_u(u0: float):
     """
     Builds a constant initializer for u that returns u0 everywhere.
 
@@ -181,8 +179,8 @@ def initFields(
     com_0 = Function(ME, name="com_0")
 
     # Initial conditions
-    phi0_f = initial_phi_tanh_factory(Lx, Ly, R0, lamda_0)
-    u0_f   = initial_u_constant_factory(u0)
+    phi0_f = initial_phi(Lx, Ly, R0, lamda_0)
+    u0_f   = initial_u(u0)
     com.x.array[:] = 0.0
     com.sub(0).interpolate(phi0_f)
     com.sub(1).interpolate(u0_f)
@@ -206,7 +204,7 @@ def initFields(
     return com, com_0, phi, u
 
 
-def buildForms(
+def weakForms(
     msh, ME, phi, u, com, com_0,
     zet: float, tau_0: float, lamda_0: float, dt: float, D: float,
     eps_an_val: float, eta_val: float, K_val: float
@@ -266,7 +264,7 @@ def buildForms(
     return R, J, (w_phi, w_u)
 
 
-def solverSetup(msh, R, J, newton_rtol: float, newton_atol: float, newton_max_it: int) -> NewtonSolver:
+def Solver(msh, R, J, newton_rtol: float, newton_atol: float, newton_max_it: int) -> NewtonSolver:
     """
     Configures a Newton solver using preonly+LU (SuperLU_DIST/MUMPS if available).
 
@@ -407,9 +405,9 @@ def main():
     msh = meshCreation(comm, Lx, Ly, Nx, Ny)
     ME, _ = functionSpaces(msh)
     com, com_0, phi, u = initFields(ME, Lx, Ly, R0, lamda_0, u0, noise_amp, noise_seed, noise_masked)
-    R, J, _ = buildForms(msh, ME, phi, u, com, com_0,
+    R, J, _ = weakForms(msh, ME, phi, u, com, com_0,
                          zet, tau_0, lamda_0, dt, D, eps_an_val, eta_val, K)
-    solver = solverSetup(msh, R, J, newton_rtol, newton_atol, newton_max_it)
+    solver = Solver(msh, R, J, newton_rtol, newton_atol, newton_max_it)
 
     # Time stepping
     stats = timeLoop(msh, ME, solver, com, com_0, dt, T, save_stride, out_file)

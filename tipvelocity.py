@@ -15,7 +15,7 @@ def is_file(path):
 def run(xdmf_path, field=None, direction="x", center=0.5):
     ts = meshio.xdmf.TimeSeriesReader(xdmf_path)
     base_dir = os.path.dirname(xdmf_path)
-    out_csv  = os.path.join(base_dir, "tip_trace_from_meshio.csv")
+    out_csv  = os.path.join(base_dir, "tip_trace.csv")
 
     with ts:
         points, cells = ts.read_points_cells()
