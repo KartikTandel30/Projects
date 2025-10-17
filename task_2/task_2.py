@@ -12,18 +12,40 @@ from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.nls.petsc import NewtonSolver
 from ufl import dx, grad, inner
 from dolfinx import fem
+import json
+import argparse
+import pathlib
+# Parameters
+from test2 import CoupledDiagnostics
+from test_bc import bc_check
 
+# Minimal JSON loader: read 'parameter_to.json' located next to this script.
+param_file = pathlib.Path(__file__).resolve().parent / "parameter.json"
+if not param_file.exists():
+    raise RuntimeError(
+        f"Parameter file not found: {param_file}\nCreate a JSON file named 'parameter_to.json' next to this script with keys: dt, Lx, Ly, Nx, Ny, T, zet, u, tau_0, lamda_0"
+    )
 
-# ---------------- parameters ----------------
-zet = 1.6    # coupling constant
-tau_0 = 1.0  # characteristic time scale
-lamda_0 = 1.0  # characteristic interface thickness
-dt = 0.04   # time step
-D = 1.0
-Lx = 200.0
-Ly = 200.0
-Nx = 150
-Ny = 150
+with param_file.open("r", encoding="utf-8") as fh:
+    params = json.load(fh)
+
+required = ["dt", "Lx", "Ly", "Nx", "Ny", "T", "zet", "u", "tau_0", "lamda_0"]
+missing = [k for k in required if k not in params]
+if missing:
+    raise RuntimeError(f"Missing parameter keys in {param_file}: {missing}")
+
+# assign parameters (minimal casting)
+dt = float(params["dt"]) 
+Lx = float(params["Lx"]) 
+Ly = float(params["Ly"]) 
+Nx = int(params["Nx"]) 
+Ny = int(params["Ny"]) 
+T = float(params["T"]) 
+zet = float(params["zet"]) 
+u = float(params["u"]) 
+tau_0 = float(params["tau_0"]) 
+lamda_0 = float(params["lamda_0"]) 
+D = float(params.get("D", 1.0))  # default to 1.0 if not provided
 
 WRITE_EVERY = 50         # write XDMF every N steps (set 0 to disable)
 OUT_DIR = "out_task2"    # where XDMFs go
@@ -64,6 +86,8 @@ com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
 
+
+
 # ---------------- weak forms ----------------
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
 
@@ -86,8 +110,8 @@ J    = ufl.derivative(R, com, dcom)
 
 # ---------------- diagnostics ----------------
 # Silence runtime prints by not passing print_fn
-#diag = CoupledDiagnostics(msh, phi, u, lamda_0, zet, tau=tau_0, D=D, plot_every=999999)
-#diag.start()  # no printing
+diag = CoupledDiagnostics(msh, phi, u, lamda_0, zet, tau=tau_0, D=D, plot_every=999999)
+diag.start()  # no printing
 
 # ---------------- solver ---------------------
 problem = NonlinearProblem(R, com, bcs=[], J=J)
@@ -139,7 +163,7 @@ while t < T:
     t += dt
     step += 1
     solver.solve(com)
-    #diag.update(t)  # silent
+    diag.update(t)  # silent
 
     # advance "previous" state and scatter
     com_0.x.array[:] = com.x.array
@@ -157,10 +181,10 @@ while t < T:
     #u_series.write_function(u_out, t)
 
 # ---------------- wrap-up --------------------
-#diag.finish()  # writes CSV + PNGs under diag_out/
+diag.finish()  # writes CSV + PNGs under diag_out/
 
 phi_series.close()
 #u_series.close()
-#bc_check(msh, phi, u, tol=1e-8)
+bc_check(msh, phi, u, tol=1e-8)
 if rank == 0:
     print("[run] Simulation finished. XDMF written to:", OUT_DIR)

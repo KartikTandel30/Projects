@@ -21,6 +21,7 @@ from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot  # use uf
 from dolfinx import default_real_type
 from dolfinx.mesh import CellType, create_rectangle
 from dolfinx.fem import Constant, Function, functionspace
+from dolfinx import fem
 from dolfinx.fem.petsc import NonlinearProblem
 from dolfinx.nls.petsc import NewtonSolver
 from dolfinx.io import XDMFFile
@@ -47,7 +48,7 @@ def loadParams(csv_path: str) -> Tuple[Dict[str, float | int | str], str]:
     """
     DEFAULTS = {
         # physics
-        "zet": 1.6, "tau_0": 1.0, "lambda_0": 1.0, "D": 1.0, "K": 0.5,
+        "zet": 1.6, "tau_0": 1.0, "lamda_0": 1.0, "D": 1.0, "K": 0.5,
         "eps_an": 0.05, "eta": 1e-8, "u0": -0.75,
         # mesh / time
         "Lx": 1.0, "Ly": 1.0, "Nx": 500, "Ny": 500,
@@ -124,16 +125,19 @@ def functionSpaces(msh):
     return ME, P1
 
 
-def initial_phi(Lx: float, Ly: float, R0: float, lambda_0: float):
+from test_bc import bc_check
+
+
+def initial_phi(Lx: float, Ly: float, R0: float, lamda_0: float):
     """
-    Builds a tanh-profile initializer for phi: tanh((R0 - r)/w_eq), with w_eq = sqrt(2)*lambda_0.
+    Builds a tanh-profile initializer for phi: tanh((R0 - r)/w_eq), with w_eq = sqrt(2)*lamda_0.
 
     Returns
     -------
     f : callable
         Function mapping coordinates x (shape (2, npts)) to the initial phi values.
     """
-    w_eq = np.sqrt(2.0) * lambda_0
+    w_eq = np.sqrt(2.0) * lamda_0
 
     def _phi0(x):
         xc = x[0] - Lx / 2.0
@@ -160,7 +164,7 @@ def initial_u(u0: float):
 
 def initFields(
     ME,
-    Lx: float, Ly: float, R0: float, lambda_0: float,
+    Lx: float, Ly: float, R0: float, lamda_0: float,
     u0: float, noise_amp: float, noise_seed: int, noise_masked: int
 ):
     """
@@ -179,7 +183,7 @@ def initFields(
     com_0 = Function(ME, name="com_0")
 
     # Initial conditions
-    phi0_f = initial_phi(Lx, Ly, R0, lambda_0)
+    phi0_f = initial_phi(Lx, Ly, R0, lamda_0)
     u0_f   = initial_u(u0)
     com.x.array[:] = 0.0
     com.sub(0).interpolate(phi0_f)
@@ -206,7 +210,7 @@ def initFields(
 
 def weakForms(
     msh, ME, phi, u, com, com_0,
-    zet: float, tau_0: float, lambda_0: float, dt: float, D: float,
+    zet: float, tau_0: float, lamda_0: float, dt: float, D: float,
     eps_an_val: float, eta_val: float, K_val: float
 ):
     """
@@ -264,7 +268,7 @@ def weakForms(
     return R, J, (w_phi, w_u)
 
 
-def Solver(msh, R, J, com, newton_rtol: float, newton_atol: float, newton_max_it: int) -> NewtonSolver:
+def Solver(msh, R, J, newton_rtol: float, newton_atol: float, newton_max_it: int) -> NewtonSolver:
     """
     Configures a Newton solver using preonly+LU (SuperLU_DIST/MUMPS if available).
 
@@ -273,7 +277,7 @@ def Solver(msh, R, J, com, newton_rtol: float, newton_atol: float, newton_max_it
     solver : NewtonSolver
         The assembled nonlinear solver ready to advance the system.
     """
-    problem = NonlinearProblem(R, com, bcs=[], J=J)
+    problem = NonlinearProblem(R, None, bcs=[], J=J)
     solver = NewtonSolver(msh.comm, problem)
     solver.convergence_criterion = "incremental"
     solver.rtol = float(newton_rtol)
@@ -369,7 +373,7 @@ def main():
 
     zet = float(p["zet"])
     tau_0 = float(p["tau_0"])
-    lambda_0 = float(p["lambda_0"])
+    lamda_0 = float(p["lamda_0"])
     D = float(p["D"]);     K = float(p["K"])
     eps_an_val = float(p["eps_an"])
     eta_val = float(p["eta"])
@@ -393,7 +397,7 @@ def main():
         print(f"[RUN CONFIG] Source: {p_source}")
         print(f"  Domain: Lx={Lx}, Ly={Ly}, Nx={Nx}, Ny={Ny}")
         print(f"  Time:   dt={dt}, T={T}, save_stride={save_stride}")
-        print(f"  Phys:   lambda_0={lambda_0}, tau_0={tau_0}, zet={zet}, D={D}, K={K}")
+        print(f"  Phys:   lamda_0={lamda_0}, tau_0={tau_0}, zet={zet}, D={D}, K={K}")
         print(f"  Aniso:  eps_an={eps_an_val}, eta={eta_val}")
         print(f"  Seed:   R0={R0}, u0={u0}")
         print(f"  Noise:  amp={noise_amp}, seed={noise_seed}, masked={noise_masked}")
@@ -404,10 +408,10 @@ def main():
     comm = MPI.COMM_WORLD
     msh = meshCreation(comm, Lx, Ly, Nx, Ny)
     ME, _ = functionSpaces(msh)
-    com, com_0, phi, u = initFields(ME, Lx, Ly, R0, lambda_0, u0, noise_amp, noise_seed, noise_masked)
+    com, com_0, phi, u = initFields(ME, Lx, Ly, R0, lamda_0, u0, noise_amp, noise_seed, noise_masked)
     R, J, _ = weakForms(msh, ME, phi, u, com, com_0,
-                         zet, tau_0, lambda_0, dt, D, eps_an_val, eta_val, K)
-    solver = Solver(msh, R, J, com, newton_rtol, newton_atol, newton_max_it)
+                         zet, tau_0, lamda_0, dt, D, eps_an_val, eta_val, K)
+    solver = Solver(msh, R, J, newton_rtol, newton_atol, newton_max_it)
 
     # Time stepping
     stats = timeLoop(msh, ME, solver, com, com_0, dt, T, save_stride, out_file)

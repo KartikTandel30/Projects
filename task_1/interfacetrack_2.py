@@ -103,13 +103,10 @@ if os.path.exists("energy_track.csv"):
     fig = plt.figure(figsize=(6.0, 4.2))
     plt.plot(tE, E, lw=1.8)
     plt.xlabel("time")
-    plt.ylabel(r"total energy $\mathcal{E}(t)$")
+    plt.ylabel(r"total energy($\Pi(t)$)")
     plt.title("Energy decay")
     plt.grid(True, alpha=0.25)
-    # small note on monotonicity
-    txtE = fr"Energy blip: {worst_rel_increase:.2e}"
-    plt.text(0.98, 0.98, txtE, transform=plt.gca().transAxes,
-             va="top", ha="right", bbox=dict(boxstyle="round,pad=0.2", fc="w", ec="0.7"))
+
     plt.tight_layout()
     plt.savefig("energy_decay.png", dpi=out_dpi)
     plt.close(fig)
