@@ -23,7 +23,7 @@ Weak residuals solved each BE step:
           + Δt ∫ [ ∂f/∂φ(φ,u) * w_φ ] dx
           + Δt ∫ [ Q(∇φ) · ∇w_φ ] dx
 
-    R_u = ∫ [ (u - u0) * w_u - K (φ - φ0) * w_u ] dx
+    R_u = ∫ [ (u - u0) * w_u - K*Δt (φ - φ0) * w_u ] dx
           + Δt ∫ [ D ∇u · ∇w_u ] dx
 
 where τ(n) = τ0 * a(n)^2 (standard kinetic anisotropy scaling).
@@ -61,24 +61,24 @@ import time
 from numpy.random import default_rng  # ADD THIS
 rng = default_rng(12345) 
 
-OUT_DIR = "out_task3_6"
+OUT_DIR = "out_task3_fb1_2"
 comm = MPI.COMM_WORLD
 rank = comm.rank
 t_start = time.time()
 # ---------------- Parameters ----------------
 zet = 0     # coupling ξ
 tau_0 = 1.0        # characteristic time-scale
-lambda_0 = 1      # interface width
-dt = 0.04          # time step size
+lambda_0 = 1.0      # interface width
+dt = 0.01          # time step size
 D = 1              # diffusion coeff
-u0 = -0.65         # initial undercooling
-T = 200.0          # total simulation time
-STRIDE = 40  # save every STRIDE time steps
+u0 = 0         # initial undercooling
+T = 40.0          # total simulation time
+STRIDE = 5  # save every STRIDE time steps
 # Mesh
-Lx, Ly = 250, 250    #  domain size
-Nx, Ny = 250, 250    # number of elements 
-r0 = 5.0           # initial solid seed  radius
-eps_an = 0.05
+Lx, Ly = 100, 100    #  domain size
+Nx, Ny = 100, 100    # number of elements 
+r0 = 3           # initial solid seed  radius
+eps_an = 0.00
 K = 0.0
 
 
@@ -95,17 +95,14 @@ phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
 
-w_eq = np.sqrt(2.0) * lambda_0 
-
+w_eq = np.sqrt(2.0) * lambda_0
 def initial_phi(x):
-    xc = x[0] - Lx/2.0
-    yc = x[1] - Ly/2.0
-    r  = np.sqrt(xc**2 + yc**2)
+    r = np.sqrt((x[0]-Lx/2.0)**2 + (x[1]-Ly/2.0)**2)
     return np.tanh((r0 - r) / w_eq)
 
-
 def initial_u(x):
-    return u0*np.ones(x.shape[1], dtype=default_real_type)
+    # nice & smooth to visualize
+    return np.cos(np.pi * x[0] / Lx) * np.cos(np.pi * x[1] / Ly)
 
 com.x.array[:] = 0
 com.sub(0).interpolate(initial_phi)
@@ -223,12 +220,12 @@ while t < T:
         u_out.x.array[:]   = com.x.array[map_u]
         phi_series.write_function(phi_out, t)
         u_series.write_function(u_out, t)
-
+    '''
     phi_vals_all = com.x.array[map_phi]
     if np.allclose(np.abs(phi_vals_all), 1.0, atol=1e-3):
         print("All nodes reached a stable phase (±1). Ending early.")
         break
-    
+    '''
 
 
 

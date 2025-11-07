@@ -100,7 +100,7 @@ R0 = (
 
 R1 = (
     (u - u_0)*w_u*dx
-  - 0.5*(phi - phi_0)*w_u*dx
+  - dt*0.5*(phi - phi_0)*w_u*dx
   + dt*D*inner(grad(u), grad(w_u))*dx
 )
 

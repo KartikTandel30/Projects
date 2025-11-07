@@ -1,5 +1,16 @@
 import os, sys, numpy as np, meshio
 
+# ================== USER SETTINGS (edit here) ==================
+SKIP_FIRST = 0          # number of initial samples to drop from the plot (e.g., 2 or 3)
+YMIN, YMAX = None, None # e.g., YMIN=0.045, YMAX=0.075 for a wider range; set to None to auto
+V_THEORY = 0.0469         # e.g., 0.050  -> draws a green horizontal line at 0.050
+# ===============================================================
+
+# Headless plotting
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 def ask(prompt, default=None, checker=None):
     while True:
         val = input(f"{prompt}" + (f" [{default}]" if default is not None else "") + ": ").strip()
@@ -15,7 +26,9 @@ def is_file(path):
 def run(xdmf_path, field=None, direction="x", center=0.5):
     ts = meshio.xdmf.TimeSeriesReader(xdmf_path)
     base_dir = os.path.dirname(xdmf_path)
-    out_csv  = os.path.join(base_dir, "tip_trace_from_meshio.csv")
+    out_csv  = os.path.join(base_dir, "tip_trace.csv")
+    out_png_vel = os.path.join(base_dir, "v_tip_vs_time.png")
+    out_svg_vel = os.path.join(base_dir, "v_tip_vs_time.svg")
 
     with ts:
         points, cells = ts.read_points_cells()
@@ -29,7 +42,6 @@ def run(xdmf_path, field=None, direction="x", center=0.5):
         cx = xmin + center * Lx
         cy = ymin + center * Ly
 
-        # estimate spacing for picking a centerline
         ux = np.unique(np.round(x, 12))
         uy = np.unique(np.round(y, 12))
         dx_h = float(np.min(np.diff(ux))) if len(ux) > 1 else Lx/100.0
@@ -49,7 +61,6 @@ def run(xdmf_path, field=None, direction="x", center=0.5):
             s0 = cy
 
         def zero_cross(vals):
-            # find rightmost φ=0 crossing to the + direction
             sgn = np.sign(vals); s_tip = np.nan
             for k in range(len(vals) - 1):
                 if s_line[k] <= s0:
@@ -66,7 +77,6 @@ def run(xdmf_path, field=None, direction="x", center=0.5):
             t, point_data, _ = ts.read_data(k)
             key = field
             if key is None:
-                # try common names; otherwise first scalar
                 for cand in ("phi","f","phi_0","f_0","phi_sub"):
                     if cand in point_data:
                         key = cand; break
@@ -81,15 +91,66 @@ def run(xdmf_path, field=None, direction="x", center=0.5):
             tip_t.append(float(t))
             tip_s.append(float(s_tip) if np.isfinite(s_tip) else np.nan)
 
-        tip_t = np.asarray(tip_t)
-        tip_s = np.asarray(tip_s)
+        tip_t = np.asarray(tip_t, dtype=float)
+        tip_s = np.asarray(tip_s, dtype=float)
+
+        # Central-difference velocity
         V_tip = np.full_like(tip_s, np.nan, dtype=float)
         if len(tip_t) >= 2:
-            V_tip[1:] = (tip_s[1:] - tip_s[:-1]) / (tip_t[1:] - tip_t[:-1])
+            V_tip[0]  = (tip_s[1] - tip_s[0]) / (tip_t[1] - tip_t[0]) if (tip_t[1]-tip_t[0])!=0 else np.nan
+            V_tip[-1] = (tip_s[-1]-tip_s[-2]) / (tip_t[-1]-tip_t[-2]) if (tip_t[-1]-tip_t[-2])!=0 else np.nan
+            if len(tip_t) > 2:
+                V_tip[1:-1] = (tip_s[2:] - tip_s[:-2]) / (tip_t[2:] - tip_t[:-2])
 
+        # Save CSV
         np.savetxt(out_csv, np.c_[tip_t, tip_s, V_tip], delimiter=";", fmt="%.6g",
-           header="t; tip_pos; V_tip", comments="")
-        print("\nSaved:", out_csv)
+                   header="t; tip_pos; V_tip", comments="")
+
+        # Plot ONLY velocity
+        m = np.isfinite(tip_t) & np.isfinite(V_tip)
+        t_plot = tip_t[m]
+        v_plot = V_tip[m]
+
+        # Skip initial transient points (no re-scaling)
+        if SKIP_FIRST > 0 and SKIP_FIRST < len(t_plot):
+            t_plot = t_plot[SKIP_FIRST:]
+            v_plot = v_plot[SKIP_FIRST:]
+
+        fig, ax = plt.subplots(figsize=(4.0, 3.2), dpi=180)
+
+        # simulation line (blue) + markers
+        sim_line, = ax.plot(t_plot, v_plot, lw=1.8, color="C0", label="Simulation")
+        ax.plot(t_plot, v_plot, ms=3.2, color="C0")
+
+        # theory as a thin green horizontal line (only if provided)
+        if V_THEORY is not None:
+            th_line = ax.axhline(V_THEORY, color="black", lw=1.8, label="Theory")
+
+        ax.set_xlabel("Time")
+        ax.set_ylabel(r"$\nu_{\mathrm{tip}}$")
+
+        # widen y-range if you set YMIN/YMAX at the top
+        if YMIN is not None and YMAX is not None:
+            ax.set_ylim(YMIN, YMAX)
+
+        ax.grid(True, alpha=0.3)
+
+        # compact legend (only if theory is drawn)
+        if V_THEORY is not None:
+            ax.legend(loc="upper right",
+                    fontsize=8,        # smaller text
+                    frameon=False,     # no box
+                    handlelength=2.6,  # shorter handles
+                    borderpad=0.2, labelspacing=0.2)
+
+        fig.tight_layout()
+        fig.savefig(out_png_vel)
+        fig.savefig(out_svg_vel)
+        plt.close(fig)
+
+        print("\nSaved CSV :", out_csv)
+        print("Saved plot:", out_png_vel)
+        print("Saved plot:", out_svg_vel)
         print(f"Last: t={tip_t[-1]:.6g}, tip={tip_s[-1]:.6g}, V_tip≈{V_tip[-1]:.6g}")
 
 if __name__ == "__main__":
@@ -97,7 +158,6 @@ if __name__ == "__main__":
     print("Paste the full path to your .xdmf (its .h5 must sit next to it).")
     xdmf_path = ask("XDMF path", checker=is_file)
 
-    # Optional: direction, field name, centerline position
     direction = ask("Growth direction (x/y)", default="x",
                     checker=lambda s: s.lower() in ("x","y"))
     field = ask("Field name (Enter for auto-detect)", default="")
@@ -113,5 +173,5 @@ if __name__ == "__main__":
         run(xdmf_path, field=field, direction=direction, center=center)
     except Exception as e:
         print("\nERROR:", e)
-        print("Tip: ensure the .h5 is in the same folder as the .xdmf, and the field name is correct.")
+        print("Tip: ensure the .h5 is next to the .xdmf and the field name is correct.")
         sys.exit(1)

@@ -23,7 +23,7 @@ Weak residuals solved each BE step:
           + Δt ∫ [ ∂f/∂φ(φ,u) * w_φ ] dx
           + Δt ∫ [ Q(∇φ) · ∇w_φ ] dx
 
-    R_u = ∫ [ (u - u0) * w_u - K (φ - φ0) * w_u ] dx
+    R_u = ∫ [ (u - u0) * w_u - Δt*K (φ - φ0) * w_u ] dx
           + Δt ∫ [ D ∇u · ∇w_u ] dx
 
 where τ(n) = τ0 * a(n)^2 (standard kinetic anisotropy scaling).
@@ -31,9 +31,6 @@ where τ(n) = τ0 * a(n)^2 (standard kinetic anisotropy scaling).
 I/O:
     Writes XDMF time series for φ and u in OUT_DIR every STRIDE steps.
 
-Usage:
-    mpirun -np 4 python this_file.py
-    (adjust OUT_DIR, geometry, params below as needed)
 
 Notes for report mapping:
     • Equations implemented: R_u, R_φ as above, with four-fold anisotropy.
@@ -158,7 +155,7 @@ R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*F_grad_aniso )
 
 R1 = ( (u - u_0)*w_u*dx
-     - dt*k*(phi - phi_0)*w_u*dx
+     - k*dt*(phi - phi_0)*w_u*dx
      + dt*D*inner(grad(u), grad(w_u))*dx )
 
 R = R0 + R1
