@@ -1,0 +1,33 @@
+This Python script performs modal analysis on mechanical structures using Finite Element Method (FEM). is is crucial for assessing potential resonant behaviors and structural 
+
+Features
+Reads input data from CSV files containing node details, element connectivity, geometry details, and material properties.
+Constructs global stiffness and mass matrices.
+Solves for natural frequencies and mode shapes.
+Plots the first three mode shapes with deformations.
+
+Requirements
+To run this script, you need the following:
+Python 3.6 or higher
+NumPy
+pandas
+Matplotlib
+SciPy
+
+Input Data Format
+The script expects the following CSV files in a specified directory:
+node_details.csv: Node number and their coordinates.
+element_connectivity.csv: Element number and the nodes that form each element.
+GeometryDetails.csv: Element number, area, and other geometric details.
+reinforced_concrete_properties.csv: Material properties like density and Young's modulus.
+Boundary Condition: please check the Bridge_Ele.png file
+Usage
+Ensure all input CSV files are placed in the correct directory.
+Update the directory variable in the script to the path where your input files are located.
+Run the script:
+bash
+Copy code
+python vibration_analysis.py
+Output
+The script prints the first three natural frequencies to the console.
+Generates plots for the first three mode shapes showing both undeformed and deformed structures.
