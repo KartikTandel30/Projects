@@ -1,44 +1,37 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Dendrite Phase-Field (φ–u) — monolithic Backward–Euler solver (FEniCSx)
+task3_fb_2.py — φ–u phase-field (flat boundary) with optional anisotropy
 
-Model (non-dimensional, pure-metal style):
-    τ0 * φ̇ = -μ,
-    μ = ∂f/∂φ(φ, u) - ∇·Q,    with anisotropic gradient penalty.
-    u̇  = D ∇²u + K * φ̇        (latent-heat/enthalpy coupling; here K≈1/2)
+Overview
+--------
+Monolithic Backward–Euler solve for coupled fields (φ, u) on a 2D rectangle:
+  τ0 φ̇ = -μ,  with  μ = ∂f/∂φ(φ,u) - ∇·Q(∇φ)
+  u̇  = D ∇²u + K φ̇
 
-Here we discretize in time with fully implicit Backward–Euler and solve φ and u
-*monolithically* with a consistent Jacobian (Newton). Spatial discretization: P1×P1.
+• Space: P1 × P1 on a triangular mesh (dolfinx).
+• Time: implicit Euler; Newton with a consistent Jacobian.
+• Gradient energy: four-fold anisotropy via  a(n) = (1-3ε) + 4ε(n_x^4 + n_y^4).
+  The interfacial flux is Q = λ0² [ a( n̂ )² ∇φ + |∇φ|² a( n̂ ) ∂a/∂g ].
+  Set ε=0 for isotropic behavior.
 
-Bulk energy density f(φ,u):
-    f(φ,u) = -1/2 φ² + 1/4 φ⁴ + ζ u φ (1 - (2/3)φ² + (1/5)φ⁴)
+Weak forms per step (w_φ, w_u are tests):
+  R_φ = ∫ [ τ(n̂)(φ-φ0) w_φ ] dx
+        + Δt ∫ [ (∂f/∂φ)(φ,u) w_φ ] dx
+        + Δt ∫ [ Q(∇φ) · ∇w_φ ] dx
 
-Anisotropy (four-fold) enters the gradient energy via
-    a(n) = (1 - 3 ε) + 4 ε (n_x^4 + n_y^4),  with n = ∇φ / |∇φ|
-and we build the interfacial flux Q ≡ Q(∇φ) following the usual projection-based
-construction (see code). When ε=0, this reduces to the isotropic penalty.
+  R_u = ∫ [ (u - u0) - Δt K (φ - φ0) ] w_u dx
+        + Δt ∫ [ D ∇u · ∇w_u ] dx
 
-Weak residuals solved each BE step:
-    R_φ = ∫ [ τ( n ) (φ - φ0) * w_φ ] dx
-          + Δt ∫ [ ∂f/∂φ(φ,u) * w_φ ] dx
-          + Δt ∫ [ Q(∇φ) · ∇w_φ ] dx
+BCs: natural (zero-flux) for both φ and u.
+I/O: writes XDMF time series for φ and u into OUT_DIR every STRIDE steps.
 
-    R_u = ∫ [ (u - u0) * w_u - K (φ - φ0) * w_u ] dx
-          + Δt ∫ [ D ∇u · ∇w_u ] dx
+Notes
+-----
+• Set ζ≠0 to couple bulk f(φ,u); ζ=0 decouples f from u (used here).
+• Set K (typ. ~0.5) for latent heat coupling; K=0 disables it (used here).
+• A small η regularizes n̂ = ∇φ/|∇φ| when |∇φ|~0.
 
-where τ(n) = τ0 * a(n)^2 (standard kinetic anisotropy scaling).
-
-I/O:
-    Writes XDMF time series for φ and u in OUT_DIR every STRIDE steps.
-
-Usage:
-    mpirun -np 4 python this_file.py
-    (adjust OUT_DIR, geometry, params below as needed)
-
-Notes for report mapping:
-    • Equations implemented: R_u, R_φ as above, with four-fold anisotropy.
-    • BCs: homogeneous Neumann (natural) for both fields.
-    • Diagnostics can be plugged via your CoupledDiagnostics class (not shown here).
 """
 
 
@@ -61,7 +54,7 @@ import time
 from numpy.random import default_rng  # ADD THIS
 rng = default_rng(12345) 
 
-OUT_DIR = "out_task3_fb1_2"
+OUT_DIR = "out_task3_fb_2"
 comm = MPI.COMM_WORLD
 rank = comm.rank
 t_start = time.time()
@@ -71,11 +64,11 @@ tau_0 = 1.0        # characteristic time-scale
 lambda_0 = 1.0      # interface width
 dt = 0.01          # time step size
 D = 1              # diffusion coeff
-u0 = 0         # initial undercooling
-T = 40.0          # total simulation time
+u0 = -0.75         # initial undercooling
+T = 20.0          # total simulation time
 STRIDE = 5  # save every STRIDE time steps
 # Mesh
-Lx, Ly = 100, 100    #  domain size
+Lx, Ly = 100.0, 100.0    #  domain size
 Nx, Ny = 100, 100    # number of elements 
 r0 = 3           # initial solid seed  radius
 eps_an = 0.00
@@ -101,8 +94,7 @@ def initial_phi(x):
     return np.tanh((r0 - r) / w_eq)
 
 def initial_u(x):
-    # nice & smooth to visualize
-    return np.cos(np.pi * x[0] / Lx) * np.cos(np.pi * x[1] / Ly)
+    return np.full(x.shape[1], u0, dtype=default_real_type)  # constant u
 
 com.x.array[:] = 0
 com.sub(0).interpolate(initial_phi)
@@ -154,9 +146,12 @@ R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*df*w_phi*dx
      + dt*F_grad_aniso )
 
-R1 = ( (u - u_0)*w_u*dx
-     - k*(phi - phi_0)*w_u*dx
-     + dt*D*inner(grad(u), grad(w_u))*dx )
+term_u = ((u - u_0) - k*dt*(phi - phi_0)) * w_u    # integrand (no dx yet)
+
+if D != 0.0:
+    term_u = term_u + dt*D*inner(grad(u), grad(w_u))   # still integrand
+
+R1 = term_u * dx
 
 R = R0 + R1
 dcom = ufl.TrialFunction(ME)

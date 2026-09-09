@@ -1,46 +1,28 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Dendrite Phase-Field (φ–u) — monolithic Backward–Euler solver (FEniCSx)
+task3_f1.py — Monolithic φ–u phase-field (2D), isotropic (ε=0) by default
 
-Model (non-dimensional, pure-metal style):
-    τ0 * φ̇ = -μ,
-    μ = ∂f/∂φ(φ, u) - ∇·Q,    with anisotropic gradient penalty.
-    u̇  = D ∇²u + K * φ̇        (latent-heat/enthalpy coupling; here K≈1/2)
+Model (non-dimensional, Backward–Euler in time):
+    τ0 φ̇ = -μ,   μ = ∂f/∂φ(φ,u) - ∇·Q(∇φ)       (anisotropy optional)
+    u̇  = D ∇²u + K φ̇                           (latent-heat coupling)
 
-Here we discretize in time with fully implicit Backward–Euler and solve φ and u
-*monolithically* with a consistent Jacobian (Newton). Spatial discretization: P1×P1.
-
-Bulk energy density f(φ,u):
-    f(φ,u) = -1/2 φ² + 1/4 φ⁴ + ζ u φ (1 - (2/3)φ² + (1/5)φ⁴)
-
-Anisotropy (four-fold) enters the gradient energy via
-    a(n) = (1 - 3 ε) + 4 ε (n_x^4 + n_y^4),  with n = ∇φ / |∇φ|
-and we build the interfacial flux Q ≡ Q(∇φ) following the usual projection-based
-construction (see code). When ε=0, this reduces to the isotropic penalty.
-
-Weak residuals solved each BE step:
-    R_φ = ∫ [ τ( n ) (φ - φ0) * w_φ ] dx
-          + Δt ∫ [ ∂f/∂φ(φ,u) * w_φ ] dx
+Weak residuals each step (tests w_φ, w_u):
+    R_φ = ∫ [ τ( n̂ )(φ-φ0) w_φ ] dx
+          + Δt ∫ [ (∂f/∂φ)(φ,u) w_φ ] dx
           + Δt ∫ [ Q(∇φ) · ∇w_φ ] dx
 
-    R_u = ∫ [ (u - u0) * w_u - K*Δt (φ - φ0) * w_u ] dx
+    R_u = ∫ [ (u - u0) - ΔtK(φ - φ0) ] w_u dx
           + Δt ∫ [ D ∇u · ∇w_u ] dx
 
-where τ(n) = τ0 * a(n)^2 (standard kinetic anisotropy scaling).
+Here:
+  • ζ=0 ⇒ bulk f is independent of u (decouples thermodynamics from u)
+  • K=0 ⇒ no latent-heat coupling (set K≈0.5 to enable)
+  • ε=0 ⇒ isotropic interface penalty; set ε>0 to turn on four-fold anisotropy
 
-I/O:
-    Writes XDMF time series for φ and u in OUT_DIR every STRIDE steps.
-
-Usage:
-    mpirun -np 4 python this_file.py
-    (adjust OUT_DIR, geometry, params below as needed)
-
-Notes for report mapping:
-    • Equations implemented: R_u, R_φ as above, with four-fold anisotropy.
-    • BCs: homogeneous Neumann (natural) for both fields.
-    • Diagnostics can be plugged via your CoupledDiagnostics class (not shown here).
+I/O: writes φ,u time series to OUT_DIR every STRIDE steps (XDMF+HDF5).
+BCs: natural (zero-flux) for φ and u.
 """
-
 
 from petsc4py import PETSc
 import os
@@ -58,33 +40,38 @@ import random
 from ufl import dx, grad, inner, Identity, outer, as_vector, sqrt, dot
 import numpy as np
 import time
-from numpy.random import default_rng  # ADD THIS
+from numpy.random import default_rng  #for reproducible noise
 rng = default_rng(12345) 
 
-OUT_DIR = "out_task3_fb_2"
+OUT_DIR = "out_task3_f1"
 comm = MPI.COMM_WORLD
 rank = comm.rank
 t_start = time.time()
+
+
 # ---------------- Parameters ----------------
 zet = 0     # coupling ξ
 tau_0 = 1.0        # characteristic time-scale
 lambda_0 = 1.0      # interface width
 dt = 0.01          # time step size
 D = 1              # diffusion coeff
-u0 = -0.75         # initial undercooling
-T = 20.0          # total simulation time
+u0 = 0         # initial undercooling
+T = 40.0          # total simulation time
 STRIDE = 5  # save every STRIDE time steps
 # Mesh
-Lx, Ly = 100.0, 100.0    #  domain size
+Lx, Ly = 100, 100    #  domain size
 Nx, Ny = 100, 100    # number of elements 
 r0 = 3           # initial solid seed  radius
 eps_an = 0.00
 K = 0.0
 
+#--------Mesh-------------
 
 msh = create_rectangle(MPI.COMM_WORLD, [[0.0, 0.0], [Lx, Ly]], [Nx, Ny],
                        cell_type=CellType.triangle)
 
+
+#-------Function spaces --------------    
 P1 = element("Lagrange", msh.basix_cell(), 1, dtype=default_real_type)
 ME = functionspace(msh, mixed_element([P1, P1]))
 
@@ -94,15 +81,18 @@ com_0 = Function(ME)
 phi, u     = ufl.split(com)
 phi_0, u_0 = ufl.split(com_0)
 
-
+#----------------   Initial conditions --------------
 w_eq = np.sqrt(2.0) * lambda_0
 def initial_phi(x):
     r = np.sqrt((x[0]-Lx/2.0)**2 + (x[1]-Ly/2.0)**2)
     return np.tanh((r0 - r) / w_eq)
 
 def initial_u(x):
-    return np.full(x.shape[1], u0, dtype=default_real_type)  # constant u
+    # nice & smooth to visualize
+    return np.cos(np.pi * x[0] / Lx) * np.cos(np.pi * x[1] / Ly)
 
+
+#--------------- Initialize fields --------------
 com.x.array[:] = 0
 com.sub(0).interpolate(initial_phi)
 com_0.sub(0).interpolate(initial_phi)
@@ -111,6 +101,7 @@ com_0.sub(1).interpolate(initial_u)
 com.x.scatter_forward()
 com_0.x.scatter_forward()
 
+# Add small random noise to phi to trigger dynamics
 
 phi_vec = com.sub(0).x.array
 mask = np.clip(1.0 - phi_vec**2, 0.0, 1.0)
@@ -120,6 +111,7 @@ com.sub(0).x.array[:] = phi_vec
 com.x.scatter_forward()
 com_0.x.array[:] = com.x.array
 com_0.x.scatter_forward()
+
 
 # Free-energy derivative
 df = -phi + phi**3 + zet*u*(1 - 2*phi**2 + phi**4)
@@ -148,22 +140,21 @@ F_grad_aniso = inner(q_phi, grad(w_phi)) * dx
 tau = tau_0 * a**2
 # ----------------------------------------------
 
-# Weak forms
+#--------------------Weak forms---------------------
 R0 = ( tau*(phi - phi_0)*w_phi*dx
      + dt*df*w_phi*dx
      + dt*F_grad_aniso )
 
-term_u = ((u - u_0) - k*dt*(phi - phi_0)) * w_u    # integrand (no dx yet)
-
-if D != 0.0:
-    term_u = term_u + dt*D*inner(grad(u), grad(w_u))   # still integrand
-
-R1 = term_u * dx
+R1 = ( (u - u_0)*w_u*dx
+     - dt*k*(phi - phi_0)*w_u*dx
+     + dt*D*inner(grad(u), grad(w_u))*dx )
 
 R = R0 + R1
 dcom = ufl.TrialFunction(ME)
 J = ufl.derivative(R, com, dcom)
 
+
+# -----------------solver setup -----------------
 # Solver---lu 
 problem = NonlinearProblem(R, com, bcs=[], J=J)
 solver = NewtonSolver(msh.comm, problem)
@@ -189,6 +180,7 @@ elif sys.hasExternalPackage("mumps"):
 print("\n>>> Using Direct LU solver (SuperLU / MUMPS)\n")
 ksp.setFromOptions()
 
+
 # ---------------- Output dir ----------------
 phi_series = XDMFFile(comm, f"{OUT_DIR}/phi.xdmf", "w")
 u_series   = XDMFFile(comm, f"{OUT_DIR}/u.xdmf", "w")
@@ -200,6 +192,7 @@ V_u,   map_u   = ME.sub(1).collapse()
 phi_out = fem.Function(V_phi)
 u_out   = fem.Function(V_u)
 
+# ---------------- Time-stepping ----------------
 # Time
 t = 0.0
 
@@ -230,7 +223,7 @@ while t < T:
     '''
 
 
-
+#----------------- Finalize output -----------------
 phi_series.close()
 u_series.close()
 com.x.scatter_forward()
@@ -238,7 +231,7 @@ phi_fn = com.sub(0)
 u_fn   = com.sub(1)
 
 
-
+#----------------- Done -----------------
 if msh.comm.rank == 0:
     print("Simulation finished successfully.")
     print(time.time() - t_start, "seconds elapsed.")
