@@ -1,0 +1,7 @@
+Property,Value,Units
+Density,2500.00,kg/m^3
+Young's Modulus,30.00,GPa
+Compressive Strength,20-40,MPa
+Tensile Strength,45414.00,MPa
+Thermal Expansion Coefficient,12 x 10^-6,per °C
+Poisson's Ratio,0.20,

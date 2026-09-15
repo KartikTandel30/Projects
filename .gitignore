@@ -1,9 +1,27 @@
-# Ignore everything by default
-*
+# Large simulation outputs
+*.h5
+*.hdf5
+*.bp
+*.vtu
+*.pvtu
+*.xdmf
 
-# But allow descending into directories
-!*/
+# Python cache
+__pycache__/
+*.py[cod]
 
-# Track only Python files (and this .gitignore)
-!*.py
-!.gitignore
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+*.bak

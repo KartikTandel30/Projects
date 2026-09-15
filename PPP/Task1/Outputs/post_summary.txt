@@ -1,0 +1,6 @@
+=== Flat-front post summary ===
+n_samples: 554; time in [0.040, 22.160]
+x* fit speed v = 1.248318, R^2 = 0.998082
+energy decay figure: energy_decay.pdf/png
+thickness final/median: nan / 3.019973
+speed figure: speed_vs_time.pdf/png
