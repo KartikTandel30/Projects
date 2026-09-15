@@ -1,84 +1,75 @@
 # Phase-Field Modeling of Dendritic Solidification in FEniCSx
 
-A finite-element implementation of phase-field models for dendritic
-solidification using **FEniCSx / DOLFINx**, **PETSc**, and **MPI**.
+Finite-element implementation and numerical verification of phase-field models for
+dendritic solidification using **FEniCSx / DOLFINx**, **PETSc**, **MPI**, and **Python**.
 
-The project develops the numerical model progressively from a local
-phase-field evolution equation to a coupled temperature–phase-field
-formulation with anisotropic interfacial energy capable of reproducing
-dendritic growth.
-
-**Keywords:** Phase Field · Dendritic Solidification · Finite Element Method ·
-FEniCSx · Nonlinear FEM · PETSc · MPI · Scientific Computing · Materials Science
+**Computational Materials Science · Phase-Field Modeling · Finite Element Method · Nonlinear FEM · Scientific Computing**
 
 ---
 
 ## Overview
 
-Dendritic structures are commonly formed during the solidification of
-metals and alloys. Their evolution is governed by the interaction between
-phase transformation, heat or solute diffusion, interface energy, and
-anisotropic interface kinetics.
+Dendritic microstructures develop during the solidification of metals and alloys as a
+result of the interaction between phase transformation, diffusion, interface energy,
+and interfacial anisotropy.
 
-Explicitly tracking the moving solid–liquid interface becomes difficult
-once branching and complex dendritic morphologies develop. The phase-field
-method avoids explicit interface tracking by introducing a continuous
-order parameter
+Explicit tracking of the solid-liquid interface becomes increasingly difficult once
+complex morphologies and dendritic branches develop. The **phase-field method**
+avoids explicit interface tracking by introducing a continuous order parameter
+$\phi$:
 
-\[
+$$
 \phi =
 \begin{cases}
 +1, & \text{solid},\\
--1, & \text{liquid},
+-1, & \text{liquid}.
 \end{cases}
-\]
+$$
 
-with intermediate values describing the diffuse solid–liquid interface.
+Intermediate values of $\phi$ represent the diffuse solid-liquid interface.
 
-The objective of this project was to implement and numerically verify a
-phase-field formulation for dendritic solidification in **FEniCSx** using
-the finite-element method.
+The aim of this project is to implement the governing phase-field equations using
+the **finite element method in FEniCSx**, verify each part of the numerical
+formulation independently, and finally simulate anisotropic dendritic growth.
 
-The implementation is based primarily on the phase-field formulation
-presented in:
+The model development is based on the formulation studied in the reference paper:
 
-> K. Bhagat and S. Rudraraju,  
-> *Modeling of dendritic solidification and numerical analysis of the
-> phase-field approach to model complex morphologies in alloys*,  
-> Engineering with Computers, 39, 2345–2363 (2023).  
-> DOI: 10.1007/s00366-022-01767-7
+> **Modeling of dendritic solidification and numerical analysis of the phase-field approach to model complex morphologies in alloys**
 
-The original work uses finite-element / isogeometric implementations
-built on deal.II and PetIGA. This project develops the corresponding
-numerical formulation in the **Python-based FEniCSx ecosystem**.
+The implementation is developed progressively rather than directly solving the full
+dendritic problem. Each physical contribution is introduced and verified separately
+before being combined into the final solver.
 
 ---
 
-## Project Highlights
+# Project Highlights
 
-- Coupled **phase-field and diffusion/temperature model**
-- Finite-element discretization with **P1 Lagrange elements**
-- Mixed finite-element space for the coupled \(\phi-u\) problem
+- Phase-field implementation from the governing equations
+- Finite-element discretization using **FEniCSx / DOLFINx**
+- First-order **Lagrange finite elements**
+- Mixed $P_1 \times P_1$ formulation for $\phi$ and $u$
 - Fully implicit **Backward-Euler time integration**
-- Monolithic nonlinear solution using **Newton's method**
-- PETSc-based nonlinear and linear algebra infrastructure
-- Natural homogeneous Neumann / zero-flux boundary conditions
+- Nonlinear solution using **Newton's method**
+- Consistent Jacobian generated using **UFL automatic differentiation**
+- PETSc-based linear and nonlinear solution
+- MPI-compatible implementation
+- Natural homogeneous Neumann boundary conditions
 - Diffuse-interface gradient-energy formulation
-- Four-fold anisotropic interface energy
-- Circular solid-seed initialization
-- Dendritic morphology evolution
-- Dendrite-tip tracking and velocity calculation
-- Energy and thermodynamic consistency checks
+- Coupled phase-field and diffusion formulation
+- Four-fold anisotropic interfacial energy
+- Dendrite-tip tracking and velocity evaluation
+- Energy and dissipation verification
 - Enthalpy-balance verification
-- Mesh/time-step and interface-kinetics verification cases
-- MPI-compatible FEniCSx implementation
+- Boundary-condition verification
+- Decoupling tests for individual governing equations
+- Representative numerical results and post-processing scripts
 
 ---
 
-# Final Dendritic Growth Simulation
+# Dendritic Growth
 
-The final model introduces four-fold interfacial anisotropy and evolves
-an initially circular solid seed inside an undercooled liquid domain.
+The final stage introduces four-fold interfacial anisotropy to an initially circular
+solid seed.
 
 <p align="center">
   <img src="Task_3/outputs/2/t0.png" width="31%">
@@ -87,28 +78,24 @@ an initially circular solid seed inside an undercooled liquid domain.
 </p>
 
 <p align="center">
-Initial seed → anisotropic interface growth → developed dendritic morphology
+  <b>Evolution of the phase field from the initial seed to an anisotropic dendritic morphology</b>
 </p>
 
-The phase-field interface is represented by the zero level set
+The solid-liquid interface is approximately represented by the zero level set
 
-\[
-\phi = 0,
-\]
-
-which separates the bulk solid and liquid regions.
+$$
+\phi = 0.
+$$
 
 ---
 
-## Physical Model
+# Physical Model
 
-For a pure undercooled melt, the formulation uses the phase-field order
-parameter \(\phi\) together with the non-dimensional temperature /
-undercooling field \(u\).
+## Bulk Free Energy
 
-The local bulk free-energy density is
+The local bulk free-energy density used in the implementation is
 
-\[
+$$
 f(\phi,u)
 =
 -\frac{1}{2}\phi^2
@@ -117,79 +104,110 @@ f(\phi,u)
 \left(
 1-\frac{2}{3}\phi^2+\frac{1}{5}\phi^4
 \right).
-\]
+$$
 
-The first two terms form the double-well potential associated with the
-solid and liquid equilibrium states.
+The first two terms form the double-well potential associated with the two bulk
+phases.
 
-The gradient contribution introduces an energetic penalty for spatial
-variation of the phase field and therefore creates a diffuse interface.
+The derivative entering the phase-field equation is
 
-A generic free-energy functional can be written as
+$$
+\frac{\partial f}{\partial \phi}
+=
+-\phi
++\phi^3
++\zeta u
+\left(
+1-2\phi^2+\phi^4
+\right).
+$$
 
-\[
+The parameter $\zeta$ controls coupling between the phase field and the
+temperature/undercooling field.
+
+---
+
+## Gradient Energy
+
+A gradient contribution is introduced to assign energy to the diffuse
+solid-liquid interface.
+
+For the isotropic formulation, the free-energy functional can be written in the
+form
+
+$$
 \Pi[\phi,u]
 =
 \int_{\Omega}
 \left[
 f(\phi,u)
 +
-\frac{1}{2}\lambda^2(\mathbf n)
+\frac{\lambda_0^2}{2}
 |\nabla\phi|^2
-\right]\,d\Omega.
-\]
+\right]
+\,d\Omega.
+$$
+
+Here, $\lambda_0$ controls the characteristic interface thickness.
+
+The gradient contribution converts the purely local phase evolution into a spatial
+phase-field problem and allows a finite-width interface to develop.
 
 ---
 
-## Coupled Governing Equations
+# Governing Equations
 
-The implemented pure-metal-style coupled system has the form
+The general formulation implemented in the project has the structure
 
-\[
+$$
 \tau(\mathbf n)\dot{\phi}
 =
 -\mu,
-\]
+$$
 
-with
+where
 
-\[
+$$
 \mu
 =
 \frac{\partial f}{\partial\phi}
 -
-\nabla\cdot\mathbf Q,
-\]
+\nabla\cdot\mathbf Q.
+$$
 
-and
+The diffusion field satisfies
 
-\[
+$$
 \dot{u}
 =
 D\nabla^2u
 +
 K\dot{\phi}.
-\]
+$$
 
-Here:
+The variables and parameters are:
 
-- \(\phi\) — phase-field order parameter
-- \(u\) — non-dimensional temperature / undercooling
-- \(D\) — diffusion coefficient
-- \(\tau\) — phase-field kinetic time scale
-- \(K\) — latent-heat / enthalpy coupling coefficient
-- \(\mathbf Q\) — anisotropic interfacial flux
-- \(\lambda_0\) — characteristic interface thickness
+| Symbol | Description |
+|---|---|
+| $\phi$ | Phase-field order parameter |
+| $u$ | Non-dimensional temperature / undercooling field |
+| $D$ | Diffusion coefficient |
+| $\tau_0$ | Characteristic phase-field relaxation time |
+| $\lambda_0$ | Characteristic interface thickness |
+| $K$ | Phase-transformation / latent-heat coupling coefficient |
+| $\zeta$ | Bulk phase-temperature coupling coefficient |
+| $\mathbf Q$ | Interfacial flux |
+| $\mathbf n$ | Local interface normal |
 
 ---
 
-## Four-Fold Anisotropy
+# Four-Fold Interfacial Anisotropy
 
-Dendritic growth requires anisotropic interface properties.
+Dendritic morphology requires orientation-dependent interface properties.
 
-The final implementation uses a four-fold anisotropy function
+The final solver introduces the four-fold anisotropy function
 
-\[
+$$
 a(\mathbf n)
 =
 (1-3\epsilon)
@@ -198,148 +216,253 @@ a(\mathbf n)
 \left(
 n_x^4+n_y^4
 \right),
-\]
+$$
 
-where
+where the local interface normal is approximated as
 
-\[
+$$
 \mathbf n
 =
-\frac{\nabla\phi}{|\nabla\phi|}
-\]
+\frac{\nabla\phi}
+{\sqrt{\nabla\phi\cdot\nabla\phi+\eta^2}}.
+$$
 
-is the local interface normal.
+A small regularization parameter $\eta$ is used to avoid division by zero in
+regions where $|\nabla\phi|$ approaches zero.
 
-The kinetic coefficient is scaled as
+The kinetic coefficient is defined as
 
-\[
-\tau(\mathbf n)=\tau_0 a^2(\mathbf n).
-\]
+$$
+\tau(\mathbf n)
+=
+\tau_0 a^2(\mathbf n).
+$$
 
-For
+The anisotropic interfacial flux implemented in the code has the form
 
-\[
-\epsilon = 0,
-\]
+$$
+\mathbf Q
+=
+\lambda_0^2
+\left[
+a^2\nabla\phi
++
+|\nabla\phi|^2
+a
+\frac{\partial a}{\partial(\nabla\phi)}
+\right].
+$$
 
-the model reduces to the isotropic interface formulation.
+When $\epsilon = 0$, the anisotropic contribution reduces to the isotropic
+gradient formulation.
 
-For non-zero anisotropy, selected crystallographic growth directions
-become energetically favorable and the initially circular seed develops
-the characteristic dendritic arms.
+For $\epsilon > 0$, preferred growth directions are introduced and the initially
+circular interface develops an anisotropic morphology.
 
 ---
 
-# Numerical Formulation
+# Finite-Element Formulation
 
 ## Spatial Discretization
 
-The computational domain is discretized using triangular finite elements
-and first-order Lagrange interpolation.
+The computational domain is discretized using triangular finite elements.
 
-For the coupled problem, the finite-element space is
+The coupled problem uses the mixed finite-element space
 
-\[
+$$
 V_h = P_1 \times P_1,
-\]
+$$
 
-containing both
+with the unknown vector
 
-\[
-(\phi,u).
-\]
+$$
+\mathbf y =
+\begin{bmatrix}
+\phi \\
+u
+\end{bmatrix}.
+$$
 
-In FEniCSx this is implemented using a mixed finite-element space.
+Both fields are approximated using first-order Lagrange shape functions.
 
 ---
 
 ## Time Integration
 
-The transient governing equations are discretized using the fully
-implicit **Backward-Euler method**.
+The governing equations are discretized using the fully implicit
+**Backward-Euler method**.
 
-For example,
+For the phase field,
 
-\[
+$$
 \dot{\phi}
 \approx
 \frac{\phi^{n+1}-\phi^n}{\Delta t}.
-\]
+$$
 
-Backward Euler was selected for its robustness when integrating the
-nonlinear phase-field evolution equations.
+Similarly,
+
+$$
+\dot{u}
+\approx
+\frac{u^{n+1}-u^n}{\Delta t}.
+$$
+
+The implicit formulation provides robustness for the nonlinear transient
+phase-field problem.
+
+---
+
+## Weak Form
+
+The phase-field residual implemented in the final solver is
+
+$$
+R_{\phi}
+=
+\int_{\Omega}
+\tau(\mathbf n)
+(\phi-\phi_0)
+w_{\phi}
+\,d\Omega
++
+\Delta t
+\int_{\Omega}
+\frac{\partial f}{\partial\phi}
+w_{\phi}
+\,d\Omega
++
+\Delta t
+\int_{\Omega}
+\mathbf Q\cdot\nabla w_{\phi}
+\,d\Omega.
+$$
+
+The diffusion residual is
+
+$$
+R_u
+=
+\int_{\Omega}
+(u-u_0)w_u
+\,d\Omega
+-
+\Delta t K
+\int_{\Omega}
+(\phi-\phi_0)w_u
+\,d\Omega
++
+\Delta t D
+\int_{\Omega}
+\nabla u\cdot\nabla w_u
+\,d\Omega.
+$$
+
+The complete nonlinear system is
+
+$$
+R(\phi,u)
+=
+R_{\phi}
++
+R_u
+=
+0.
+$$
 
 ---
 
 ## Nonlinear Solution
 
-At every time increment, the coupled finite-element residual is solved
-using Newton's method.
+At each time increment, the coupled nonlinear residual is solved using
+**Newton's method**.
 
-The residual and consistent Jacobian are assembled through UFL and
-solved using the nonlinear solver infrastructure of DOLFINx/PETSc.
+The consistent Jacobian is generated automatically using UFL:
 
-The coupled unknowns are solved **monolithically**, rather than solving
-the phase and diffusion equations independently.
+$$
+\mathbf J
+=
+\frac{\partial\mathbf R}
+{\partial\mathbf y}.
+$$
+
+The resulting linearized system is solved through PETSc.
+
+The current implementation selects a direct LU factorization using
+**SuperLU_DIST** or **MUMPS** when available.
 
 ---
 
-## Boundary Conditions
+# Boundary Conditions
 
 No essential Dirichlet boundary conditions are imposed in the principal
-solidification simulations.
+solidification problems.
 
-The weak formulation naturally introduces homogeneous Neumann conditions,
+Integration by parts of the gradient and diffusion terms produces natural
+homogeneous Neumann boundary conditions:
 
-\[
-\nabla\phi\cdot\mathbf n = 0,
-\]
+$$
+\nabla\phi\cdot\mathbf n_b = 0,
+$$
 
 and
 
-\[
-\nabla u\cdot\mathbf n = 0,
-\]
+$$
+\nabla u\cdot\mathbf n_b = 0,
+$$
 
-corresponding to zero phase-field and thermal flux through the external
-boundaries.
+where $\mathbf n_b$ is the outward normal to the external boundary.
+
+These conditions correspond to zero phase-field and thermal/diffusive flux across
+the domain boundary.
 
 ---
 
 # Progressive Development and Verification
 
-The implementation was developed in a sequence of increasingly complex
-test problems. Each stage isolates a specific part of the formulation
-before it is introduced into the final dendritic-solidification model.
+The implementation is divided into four main development stages.
+
+This staged approach allows individual mathematical and numerical contributions to
+be checked independently before solving the complete anisotropic problem.
 
 ---
 
 ## Task 0 — Local Phase-Field Evolution
 
-**Purpose:** Verify the bulk free-energy implementation independently of
-the gradient/interface term.
+### Objective
 
-The spatial gradient contribution is removed, reducing the phase-field
-equation to a node-wise nonlinear ODE:
+Verify the local bulk free-energy implementation before adding the spatial
+gradient contribution.
 
-\[
+With the gradient term removed, the problem reduces to the node-wise evolution
+
+$$
 \tau_0\dot{\phi}
 =
 -
 \frac{\partial f}{\partial\phi}.
-\]
+$$
 
-The test checks that the computed trajectory follows the analytical
-bulk free-energy curve and evolves toward the energetically favorable
-minimum.
+Using the implemented bulk free energy,
 
-### Main files
+$$
+\tau_0\dot{\phi}
+=
+\phi-\phi^3
+-
+\zeta u
+\left(
+1-2\phi^2+\phi^4
+\right).
+$$
 
-- `Task0/task_0.py` — phase-field solver
-- `Task0/Testfvsphi.py` — free-energy verification
-- `Task0/README.md` — detailed test description
+Because no spatial gradient term is present, every node evolves according to the
+local free-energy landscape.
 
-### Selected evolution
+The numerical trajectory of a representative node is compared with the analytical
+free-energy function.
+
+### Representative evolution
 
 <p align="center">
   <img src="Task0/output/t0.png" width="31%">
@@ -347,109 +470,136 @@ minimum.
   <img src="Task0/output/t400.png" width="31%">
 </p>
 
-This first test isolates the nonlinear bulk free-energy contribution
-before introducing interface physics.
+### Main files
+
+- `Task0/task_0.py` — local phase-field solver
+- `Task0/Testfvsphi.py` — free-energy verification
+- `Task0/README.md` — detailed test description
+- `Task0/output/` — selected results
 
 ---
 
-## Task 1 — Gradient Energy and Interface Motion
+## Task 1 — Gradient Energy and Flat-Interface Motion
 
-**Purpose:** Introduce the phase-field gradient term and verify the
-formation and propagation of a diffuse interface.
+### Objective
 
-The model becomes
+Introduce the gradient-energy contribution and verify the behavior of a diffuse
+interface.
 
-\[
+The isotropic phase-field equation becomes
+
+$$
 \tau_0\dot{\phi}
 =
--
-\left[
+-\mu,
+$$
+
+with
+
+$$
+\mu
+=
 \frac{\partial f}{\partial\phi}
 -
-\lambda_0^2\nabla^2\phi
-\right].
-\]
+\lambda_0^2\nabla^2\phi.
+$$
 
-The verification considers:
+The test examines:
 
-- monotonic free-energy evolution,
+- formation of a diffuse interface,
+- evolution of the total free energy,
 - flat-interface propagation,
+- interface position,
 - interface velocity,
 - interface thickness,
-- sensitivity to spatial and temporal discretization.
+- sensitivity to temporal and spatial discretization.
 
 ### Energy evolution
 
 <p align="center">
-  <img src="Task1/Outputs/energy_decay.png" width="60%">
+  <img src="Task1/Outputs/energy_decay.png" width="65%">
 </p>
 
-### Interface propagation
+### Interface motion
 
 <p align="center">
   <img src="Task1/Outputs/xstar_vs_time_fit.png" width="48%">
   <img src="Task1/Outputs/speed_vs_time.png" width="48%">
 </p>
 
-The flat-front problem provides a controlled test of interface kinetics
-before the thermal field is coupled to the phase-field equation.
+### Interface thickness
+
+<p align="center">
+  <img src="Task1/Outputs/thickness_vs_time.png" width="60%">
+</p>
+
+### Main files
+
+- `Task1/task_1.py` — phase-field solver with gradient energy
+- `Task1/Test 1/` — flat-interface verification
+- `Task1/Outputs/` — verification plots and CSV data
 
 ---
 
-## Task 2 — Coupled Phase Field and Temperature
+## Task 2 — Coupled Phase Field and Diffusion
 
-**Purpose:** Introduce the coupled \(\phi-u\) formulation.
+### Objective
 
-A mixed finite-element space is used to solve the phase and diffusion
-fields simultaneously.
+Introduce the second field $u$ and solve the coupled $\phi-u$ problem using a
+mixed finite-element formulation.
 
-The phase-field residual contains the nonlinear bulk contribution and
-gradient energy,
+The phase residual includes
 
-\[
-R_\phi =
-\int_\Omega
-\tau_0(\phi-\phi_0)w_\phi\,d\Omega
+$$
+R_{\phi}
+=
+\int_{\Omega}
+\tau_0(\phi-\phi_0)w_{\phi}
+\,d\Omega
 +
 \Delta t
-\int_\Omega
+\int_{\Omega}
 \frac{\partial f}{\partial\phi}
-w_\phi\,d\Omega
+w_{\phi}
+\,d\Omega
 +
-\Delta t
-\int_\Omega
-\lambda_0^2
-\nabla\phi\cdot\nabla w_\phi\,d\Omega.
-\]
+\Delta t\lambda_0^2
+\int_{\Omega}
+\nabla\phi\cdot\nabla w_{\phi}
+\,d\Omega.
+$$
 
-The diffusion equation contains the phase-transformation coupling,
+The diffusion residual used in this stage is
 
-\[
-R_u =
-\int_\Omega
+$$
+R_u
+=
+\int_{\Omega}
 \left[
 (u-u_0)
 -
 \frac{1}{2}(\phi-\phi_0)
 \right]
-w_u\,d\Omega
+w_u
+\,d\Omega
 +
 \Delta t D
-\int_\Omega
-\nabla u\cdot\nabla w_u\,d\Omega.
-\]
+\int_{\Omega}
+\nabla u\cdot\nabla w_u
+\,d\Omega.
+$$
 
-### Verification checks
+### Verification
 
-The implementation includes dedicated diagnostics for:
+The coupled implementation is tested using:
 
 - total free-energy evolution,
-- dissipation,
+- dissipation behavior,
 - enthalpy balance,
-- phase/temperature coupling,
-- homogeneous zero-flux boundary conditions.
+- coupling consistency,
+- homogeneous Neumann boundary conditions.
 
-### Selected diagnostics
+### Selected results
 
 <p align="center">
   <img src="Task_2/out_task2/Energy_vs_time.png" width="48%">
@@ -461,75 +611,183 @@ The implementation includes dedicated diagnostics for:
   <img src="Task_2/out_task2/misfit_smooth.png" width="48%">
 </p>
 
+### Representative fields
+
+<p align="center">
+  <img src="Task_2/out_task2/t0.png" width="31%">
+  <img src="Task_2/out_task2/t40.png" width="31%">
+  <img src="Task_2/out_task2/u40.png" width="31%">
+</p>
+
 ### Main files
 
-- `Task_2/task_2.py` — coupled monolithic solver
+- `Task_2/task_2.py` — monolithic coupled solver
 - `Task_2/Test/test2.py` — thermodynamic diagnostics
 - `Task_2/Test/test_bc.py` — zero-flux boundary-condition verification
-- `Task_2/Test/README.md` — test documentation
+- `Task_2/Test/README.md` — verification documentation
+- `Task_2/out_task2/` — selected numerical results
 
 ---
 
-## Task 3 — Anisotropic Dendritic Growth
+## Task 3 — Four-Fold Anisotropy and Dendritic Growth
 
-**Purpose:** Extend the coupled formulation by introducing anisotropic
-interface energy and reproduce dendritic solidification.
+### Objective
+
+Extend the phase-field formulation with four-fold interfacial anisotropy and
+investigate dendritic growth from an initially circular seed.
 
 The final solver includes:
 
-- diffuse-interface phase-field evolution,
-- four-fold anisotropy,
-- implicit time integration,
-- nonlinear Newton solution,
-- circular solid seed,
-- optional interface perturbation,
-- dendrite-tip tracking.
+- mixed $\phi-u$ finite-element space,
+- implicit Backward-Euler integration,
+- Newton nonlinear solution,
+- anisotropic interfacial flux,
+- interface-normal regularization,
+- circular diffuse-interface seed,
+- small initial interface perturbation,
+- dendrite-tip post-processing.
 
-### Interface evolution
+### Important note on the provided benchmark
+
+The final solver retains the complete $\phi-u$ formulation, but the parameter set
+used in the current anisotropy benchmark is
+
+$$
+\zeta = 0,
+\qquad
+K = 0.
+$$
+
+Therefore, phase-temperature and latent-heat coupling are disabled for this specific
+benchmark.
+
+This allows the anisotropic phase-field contribution to be examined independently
+after the coupled formulation has already been verified in **Task 2**.
+
+---
+
+## Dendrite Evolution
+
+<p align="center">
+  <img src="Task_3/outputs/1/t0.png" width="24%">
+  <img src="Task_3/outputs/1/t150.png" width="24%">
+  <img src="Task_3/outputs/1/t300.png" width="24%">
+  <img src="Task_3/outputs/1/t500.png" width="24%">
+</p>
+
+### Phase-field interface
 
 <p align="center">
   <img src="Task_3/outputs/2/output_task_3_2_phi0_contours.png" width="65%">
 </p>
 
-### Dendrite-tip velocity
+---
+
+# Dendrite-Tip Tracking
+
+The dendrite-tip position is determined from the $\phi=0$ interface.
+
+For each stored state, the post-processing procedure identifies the furthest
+interface point along the selected growth direction.
+
+This provides the tip-position history
+
+$$
+x_{\mathrm{tip}}(t).
+$$
+
+The instantaneous or fitted dendrite-tip velocity is then obtained from
+
+$$
+v_{\mathrm{tip}}
+=
+\frac{d x_{\mathrm{tip}}}{dt}.
+$$
+
+### Tip-velocity result
 
 <p align="center">
-  <img src="Task_3/outputs/1/v_tip_vs_time.png" width="60%">
+  <img src="Task_3/outputs/1/v_tip_vs_time.png" width="65%">
 </p>
 
-The dendrite tip is obtained by locating the farthest intersection of
-the
+The numerical tip coordinates are also stored in `tip_trace.csv` for additional
+analysis.
 
-\[
-\phi=0
-\]
+---
 
-interface along the selected growth direction and evaluating its
-position as a function of time.
+# Additional Decoupling Tests
+
+The final-stage test directory also contains independent checks of the individual
+governing equations.
+
+### Diffusion-only test
+
+The phase field is frozen while the $u$ field evolves.
+
+This isolates the diffusion equation and verifies the implicit diffusion operator
+and zero-flux boundary conditions.
+
+### Phase-field-only test
+
+The $u$ field is held constant while $\phi$ evolves.
+
+This isolates the nonlinear phase-field and curvature-driven interface evolution.
+
+These tests help separate errors in individual physical operators from errors in
+the fully assembled nonlinear system.
 
 ---
 
 # Verification Strategy
 
-A major objective of the project was not only to reproduce dendritic
-morphologies, but also to verify the numerical implementation
-incrementally.
-
-| Stage | Feature introduced | Main verification |
+| Stage | Added physics / numerics | Main verification |
 |---|---|---|
-| Task 0 | Bulk free energy | Numerical trajectory vs analytical energy landscape |
-| Task 1 | Gradient/interface energy | Energy decay, flat-front velocity, interface thickness |
-| Task 2 | Phase–temperature coupling | Energy, dissipation, enthalpy balance, zero-flux BC |
-| Task 3 | Four-fold anisotropy | Preferred growth direction and dendrite-tip kinetics |
+| **Task 0** | Bulk free energy | Numerical trajectory vs. free-energy landscape |
+| **Task 1** | Gradient energy | Energy decay, interface velocity, interface thickness |
+| **Task 2** | $\phi-u$ coupling | Energy, dissipation, enthalpy balance, zero-flux BCs |
+| **Task 3** | Four-fold anisotropy | Preferred growth morphology and tip kinetics |
 
-Additional decoupling tests contained in `Task_3/Test/` independently
-check:
+The central philosophy of the project is:
 
-1. diffusion of \(u\) while \(\phi\) is frozen,
-2. phase-field evolution while \(u\) remains constant.
+> **build → isolate → verify → couple → verify again**
 
-This staged strategy helps distinguish errors in individual model terms
-from errors in the fully coupled nonlinear formulation.
+rather than moving directly to the final morphology without checking the
+individual terms of the model.
+
+---
+
+# Parameters of the Current Final Benchmark
+
+The current `Final.py` simulation uses the following representative parameter set:
+
+| Parameter | Value |
+|---|---:|
+| Domain size | $250 \times 250$ |
+| Mesh divisions | $250 \times 250$ |
+| Time step $\Delta t$ | $0.04$ |
+| Total simulated time | $200$ |
+| $\tau_0$ | $1.0$ |
+| $\lambda_0$ | $1.0$ |
+| $D$ | $1.0$ |
+| Initial $u_0$ | $-0.65$ |
+| Initial seed radius $r_0$ | $5.0$ |
+| Anisotropy $\epsilon$ | $0.05$ |
+| $\zeta$ | $0$ |
+| $K$ | $0$ |
+
+A diffuse circular initial interface is prescribed using
+
+$$
+\phi(r,0)
+=
+\tanh
+\left(
+\frac{r_0-r}{\sqrt{2}\lambda_0}
+\right).
+$$
+
+A small perturbation is introduced near the interface to allow anisotropic
+morphological evolution to develop.
 
 ---
 
@@ -538,11 +796,10 @@ from errors in the fully coupled nonlinear formulation.
 ```text
 PPP/
 │
-├── Final.py
-│   └── Final anisotropic phase-field solver
+├── README.md
 │
-├── PPP.pdf
-│   └── Detailed project report
+├── Final.py
+│├── PPP.pdf
 │
 ├── Task0/
 │   ├── task_0.py
@@ -553,7 +810,6 @@ PPP/
 ├── Task1/
 │   ├── task_1.py
 │   ├── Test 1/
-│   │   └── verification / post-processing scripts
 │   └── Outputs/
 │
 ├── Task_2/
@@ -571,7 +827,185 @@ PPP/
     │   ├── Test_f2.py
     │   ├── tipvelocity.py
     │   └── README.md
+    │
     └── outputs/
         ├── 1/
         └── 2/
-  
+```
+
+---
+
+# Software Stack
+
+### Numerical implementation
+
+- Python
+- FEniCSx / DOLFINx
+- UFL
+- Basix
+- PETSc
+- petsc4py
+- MPI
+- mpi4py
+- NumPy
+
+### Post-processing and visualization
+
+- Matplotlib
+- PyVista
+- PyVistaQt
+- OpenPyXL
+- ParaView
+
+---
+
+# Running the Final Solver
+
+A working FEniCSx environment with PETSc and MPI is required.
+
+From the `PPP` directory:
+
+```bash
+python Final.py
+```
+
+For an MPI run:
+
+```bash
+mpirun -np 4 python Final.py
+```
+
+The number of MPI processes can be adjusted according to the available hardware.
+
+---
+
+# Running the Development Stages
+
+## Task 0
+
+```bash
+cd Task0
+python task_0.py
+python Testfvsphi.py
+```
+
+---
+
+## Task 1
+
+```bash
+cd Task1
+python task_1.py
+```
+
+Additional verification scripts are contained in:
+
+```text
+Task1/Test 1/
+```
+
+---
+
+## Task 2
+
+```bash
+cd Task_2
+python task_2.py
+```
+
+The associated diagnostics verify the coupled formulation and boundary conditions.
+
+---
+
+## Task 3
+
+```bash
+cd Task_3
+python Final.py
+```
+
+The corresponding verification and post-processing scripts are available in:
+
+```text
+Task_3/Test/
+```
+
+---
+
+# Simulation Output
+
+The simulations generate field data using FEniCSx XDMF/HDF5 output.
+
+Raw field histories can become very large. For example, fine-mesh transient
+simulations may produce HDF5 files of several hundred megabytes.
+
+For this reason, large generated field files are intentionally excluded from this
+GitHub repository.
+
+The repository instead contains selected:
+
+- phase-field snapshots,
+- interface contours,
+- temperature-field snapshots,
+- dendrite evolution results,
+- energy histories,
+- dissipation histories,
+- balance diagnostics,
+- interface-position histories,
+- tip-position CSV files,
+- dendrite-tip velocity plots.
+
+This keeps the repository lightweight while retaining the important numerical
+evidence and verification results.
+
+---
+
+# Technical Report
+
+A more detailed description of the mathematical formulation, implementation,
+verification procedure, and numerical results is available in:
+
+**[PPP.pdf](PPP.pdf)**
+
+---
+
+# Reference Model
+
+The phase-field formulation and dendritic-solidification benchmark were developed
+with reference to:
+
+> **Modeling of dendritic solidification and numerical analysis of the phase-field approach to model complex morphologies in alloys**
+
+The present repository represents an independent **FEniCSx finite-element
+implementation and verification workflow** based on the mathematical model studied
+in that work.
+
+---
+
+# Project Context
+
+This project was developed as a **Personal Programming Project (PPP)** within the
+M.Sc. Computational Materials Science program at **TU Bergakademie Freiberg**.
+
+The emphasis of the work is not only generation of dendritic morphologies, but also
+the numerical implementation and systematic verification of the underlying
+phase-field equations.
+
+---
+
+# Author
+
+**Kartik Suresh Tandel**
+
+M.Sc. Computational Materials Science  
+TU Bergakademie Freiberg
+
+**Areas of interest**
+
+- Computational Mechanics
+- Computational Materials Science
+- Finite Element Methods
+- Phase-Field Modeling
+- Nonlinear Numerical Methods
+- Multiphysics Simulation
+- Scientific Computing
