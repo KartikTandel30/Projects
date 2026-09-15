@@ -14,11 +14,11 @@ verification, and post-processing.
 
 ## About This Repository
 
-This repository serves as a technical portfolio of projects in computational
-mechanics and computational materials science.
+This repository serves as a technical portfolio of projects in **computational
+mechanics and computational materials science**.
 
-The projects focus on implementing numerical methods rather than only using
-commercial simulation software.
+The projects focus on understanding and implementing numerical methods, rather
+than only applying existing simulation software.
 
 Typical topics include:
 
@@ -35,8 +35,8 @@ Typical topics include:
 - simulation post-processing.
 
 Each major project is maintained in its own folder with a dedicated `README.md`
-containing the theory, numerical formulation, implementation details,
-verification, and representative results.
+describing the theory, numerical formulation, implementation, verification, and
+representative results.
 
 ---
 
@@ -44,12 +44,12 @@ verification, and representative results.
 
 ## 1. Phase-Field Modeling of Dendritic Solidification
 
-**Folder:** [`PPP/`](PPP/)
+**Folder:** [`phase-field-dendritic-solidification/`](phase-field-dendritic-solidification/)
 
 **Technologies:** FEniCSx · DOLFINx · PETSc · MPI · Python · UFL · NumPy
 
-Finite-element implementation and numerical verification of a phase-field model
-for dendritic solidification.
+Finite-element implementation and numerical verification of a **phase-field model
+for dendritic solidification**.
 
 The project progressively develops the formulation from local phase evolution to
 gradient-energy effects, coupled phase-field/diffusion equations, and finally
@@ -71,9 +71,9 @@ four-fold anisotropic dendritic growth.
 - dendrite-tip tracking.
 
 <p align="center">
-  <img src="PPP/Task_3/outputs/2/t0.png" width="30%">
-  <img src="PPP/Task_3/outputs/2/t300.png" width="30%">
-  <img src="PPP/Task_3/outputs/2/t600.png" width="30%">
+  <img src="phase-field-dendritic-solidification/Task_3/outputs/2/t0.png" width="30%">
+  <img src="phase-field-dendritic-solidification/Task_3/outputs/2/t300.png" width="30%">
+  <img src="phase-field-dendritic-solidification/Task_3/outputs/2/t600.png" width="30%">
 </p>
 
 <p align="center">
@@ -101,16 +101,17 @@ Task 3
 Four-fold anisotropy and dendritic growth
 ```
 
-Verification includes energy evolution, dissipation, enthalpy balance,
-zero-flux boundary conditions, interface motion, and dendrite-tip kinetics.
+The project includes numerical checks involving energy evolution, dissipation,
+enthalpy balance, boundary conditions, interface motion, and dendrite-tip
+kinetics.
 
-**[View the complete project →](PPP/)**
+**[View the complete project →](phase-field-dendritic-solidification/)**
 
 ---
 
 ## 2. Nonlinear Finite Element Analysis of a Viscoplastic Bar
 
-**Folder:** [`NLFEM/`](NLFEM/)
+**Folder:** [`nonlinear-fem-viscoplasticity/`](nonlinear-fem-viscoplasticity/)
 
 **Technologies:** Python · NumPy · Matplotlib · Nonlinear FEM · Newton-Raphson
 
@@ -119,7 +120,7 @@ one-dimensional two-segment bar with rate-dependent viscoplastic material
 behavior.
 
 The implementation covers the complete nonlinear finite-element workflow from
-the material routine through the global equilibrium solution.
+the material routine to the global equilibrium solution.
 
 ### Main Topics
 
@@ -137,7 +138,7 @@ the material routine through the global equilibrium solution.
 - mesh/discretization analysis.
 
 <p align="center">
-  <img src="NLFEM/Plastic.png" width="68%">
+  <img src="nonlinear-fem-viscoplasticity/Plastic.png" width="68%">
 </p>
 
 ### Solver Structure
@@ -163,24 +164,26 @@ Stress / Strain / Force Results
 
 This project demonstrates the implementation of the major components required
 for nonlinear structural finite-element analysis without relying on an external
-FE solver.
+finite-element solver.
 
-**[View the complete project →](NLFEM/)**
+**[View the complete project →](nonlinear-fem-viscoplasticity/)**
 
 ---
 
 ## 3. Finite Element Modal Analysis of a 2D Structure
 
-**Folder:** [`RSJC/`](RSJC/)
+**Folder:** [`RSJC-fem-modal-analysis/`](RSJC-fem-modal-analysis/)
 
 **Technologies:** Python · NumPy · SciPy · pandas · Matplotlib · FEM
 
 A two-dimensional finite-element implementation for structural modal analysis.
 
 The structural geometry, element connectivity, material properties, and element
-geometry are read from external CSV files. The solver assembles the global
-stiffness and mass matrices and solves the generalized eigenvalue problem to
-determine natural frequencies and vibration mode shapes.
+geometry are read from external CSV files.
+
+The solver assembles the global stiffness and mass matrices and solves the
+generalized eigenvalue problem to determine natural frequencies and vibration
+mode shapes.
 
 ### Main Topics
 
@@ -198,7 +201,7 @@ determine natural frequencies and vibration mode shapes.
 - mode-shape visualization.
 
 <p align="center">
-  <img src="RSJC/Bridge_Ele.png" width="68%">
+  <img src="RSJC-fem-modal-analysis/Bridge_Ele.png" width="68%">
 </p>
 
 ### Analysis Workflow
@@ -228,7 +231,7 @@ Natural Frequencies
 Mode Shapes
 ```
 
-**[View the complete project →](RSJC/)**
+**[View the complete project →](RSJC-fem-modal-analysis/)**
 
 ---
 
@@ -236,9 +239,9 @@ Mode Shapes
 
 | Project | Main Area | Numerical Methods | Main Tools |
 |---|---|---|---|
-| [`PPP`](PPP/) | Dendritic solidification | Phase field, nonlinear FEM, implicit time integration | FEniCSx, PETSc, MPI, Python |
-| [`NLFEM`](NLFEM/) | Nonlinear structural mechanics | Newton-Raphson, constitutive integration, FEM | Python, NumPy |
-| [`RSJC`](RSJC/) | Structural dynamics | Modal FEM, generalized eigenvalue analysis | Python, SciPy, NumPy |
+| [`Phase-Field Dendritic Solidification`](phase-field-dendritic-solidification/) | Dendritic solidification | Phase field, nonlinear FEM, implicit time integration | FEniCSx, PETSc, MPI, Python |
+| [`Nonlinear FEM Viscoplasticity`](nonlinear-fem-viscoplasticity/) | Nonlinear structural mechanics | Newton-Raphson, constitutive integration, FEM | Python, NumPy |
+| [`FEM Modal Analysis`](RSJC-fem-modal-analysis/) | Structural dynamics | Modal FEM, generalized eigenvalue analysis | Python, SciPy, NumPy |
 
 ---
 
@@ -246,7 +249,7 @@ Mode Shapes
 
 The projects in this repository cover several areas of computational engineering.
 
-### Finite Element Methods
+## Finite Element Methods
 
 Implementation of finite-element concepts including:
 
@@ -259,7 +262,7 @@ Implementation of finite-element concepts including:
 - boundary conditions,
 - nonlinear residuals.
 
-### Nonlinear Computational Mechanics
+## Nonlinear Computational Mechanics
 
 Implementation of:
 
@@ -270,7 +273,7 @@ Implementation of:
 - incremental loading,
 - internal state variables.
 
-### Computational Materials Science
+## Computational Materials Science
 
 Applications involving:
 
@@ -281,7 +284,7 @@ Applications involving:
 - thermodynamic driving forces,
 - interfacial anisotropy.
 
-### Structural Dynamics
+## Structural Dynamics
 
 Implementation of:
 
@@ -296,7 +299,7 @@ Implementation of:
 # Numerical Verification
 
 An important objective across these projects is not only obtaining a numerical
-solution, but checking whether the implementation behaves as expected.
+solution, but also checking whether the implementation behaves as expected.
 
 Depending on the project, verification includes:
 
@@ -305,19 +308,19 @@ Depending on the project, verification includes:
 - Newton convergence,
 - energy evolution,
 - dissipation behavior,
-- conservation/balance checks,
+- conservation and balance checks,
 - boundary-condition checks,
 - comparison with analytical behavior,
-- simplified or decoupled test cases.
+- simplified or decoupled numerical test cases.
 
-This reflects the principle that numerical simulation results should be supported
-by verification of the implemented formulation.
+The aim is to support numerical results with appropriate verification of the
+implemented formulation.
 
 ---
 
 # Software & Tools
 
-### Programming and Scientific Computing
+## Programming and Scientific Computing
 
 - Python
 - NumPy
@@ -325,7 +328,7 @@ by verification of the implemented formulation.
 - pandas
 - Matplotlib
 
-### Finite Element & Parallel Computing
+## Finite Element & Parallel Computing
 
 - FEniCSx
 - DOLFINx
@@ -335,7 +338,7 @@ by verification of the implemented formulation.
 - MPI
 - mpi4py
 
-### Visualization & Post-Processing
+## Visualization & Post-Processing
 
 - Matplotlib
 - PyVista
@@ -349,10 +352,9 @@ by verification of the implemented formulation.
 Projects/
 │
 ├── README.md
-│
 ├── .gitignore
 │
-├── PPP/
+├── phase-field-dendritic-solidification/
 │   ├── README.md
 │   ├── Final.py
 │   ├── Task0/
@@ -360,35 +362,41 @@ Projects/
 │   ├── Task_2/
 │   └── Task_3/
 │
-├── NLFEM/
+├── nonlinear-fem-viscoplasticity/
 │   ├── README.md
 │   ├── PVL.py
 │   ├── NLFEM_report.pdf
-│   └── results
+│   ├── Elastic_curve.png
+│   ├── Plastic.png
+│   └── Convergense_with_eleme.png
 │
-└── RSJC/
+└── RSJC-fem-modal-analysis/
     ├── README.md
     ├── Final_code.py
+    ├── Bridge_Ele.png
     ├── node_details.csv
     ├── element_connectivity.csv
     ├── GeometryDetails.csv
     └── reinforced_concrete_properties.csv
 ```
 
-Each project folder is designed to be understandable independently and contains
+Each project folder is intended to be understandable independently and contains
 its own project-specific documentation.
 
 ---
 
 # Repository Growth
 
-This repository is maintained as an **evolving portfolio** of computational
-mechanics, finite-element, materials simulation, and scientific-computing work.
+This repository is maintained as an **evolving technical portfolio** of
+computational mechanics, finite-element, materials simulation, and
+scientific-computing work.
 
-The three projects currently documented here represent the present contents of
-the repository. **Additional project folders may be added over time** as new
-numerical methods, simulation workflows, academic projects, and research-oriented
-implementations are completed.
+The projects currently documented here represent the present contents of the
+repository.
+
+**Additional project folders may be added over time** as new numerical methods,
+simulation workflows, academic projects, research implementations, and
+engineering applications are completed.
 
 The repository structure is therefore intentionally extensible:
 
@@ -397,41 +405,42 @@ Projects/
 │
 ├── README.md
 │
-├── Existing_Project_1/
-├── Existing_Project_2/
-├── Existing_Project_3/
+├── phase-field-dendritic-solidification/
+├── nonlinear-fem-viscoplasticity/
+├── RSJC-fem-modal-analysis/
 │
-├── Future_Project_1/
-├── Future_Project_2/
+├── future-project/
+├── another-future-project/
 └── ...
 ```
 
-When a new major project is added, it should ideally contain:
+Each new major project should ideally follow a similar structure:
 
 ```text
-New_Project/
+project-name/
 │
 ├── README.md
 ├── source code
 ├── input data
 ├── selected results
-└── documentation
+└── supporting documentation
 ```
 
-The root `README.md` will be updated to include a short description and link to
-each completed project.
+The root `README.md` can then be extended with a short project description,
+technical keywords, representative result, and link to the corresponding
+project folder.
 
-This approach allows the repository to develop continuously while keeping the
-individual projects organized and independently documented.
+This keeps the repository scalable while allowing every project to remain
+independently documented.
 
 ---
 
-# Purpose of the Portfolio
+# Portfolio Philosophy
 
-The repository demonstrates the progression from mathematical and physical
-models to working computational implementations.
+The projects in this repository are intended to demonstrate the progression from
+a physical or mathematical problem to a working numerical implementation.
 
-The emphasis is on understanding the complete simulation workflow:
+The general workflow is:
 
 ```text
 Physical Problem
@@ -446,7 +455,7 @@ Numerical Formulation
 Implementation
       │
       ▼
-Solver
+Numerical Solver
       │
       ▼
 Verification
@@ -458,7 +467,7 @@ Post-Processing
 Engineering / Materials Interpretation
 ```
 
-The projects therefore complement experience with established engineering
+The repository therefore complements experience with established engineering
 simulation software by demonstrating implementation-level understanding of the
 underlying numerical methods.
 
@@ -471,7 +480,7 @@ underlying numerical methods.
 M.Sc. Computational Materials Science  
 TU Bergakademie Freiberg
 
-### Technical Interests
+## Technical Interests
 
 - Computational Mechanics
 - Finite Element Analysis
